@@ -47,7 +47,7 @@ async function initLotte() {
 }
 
 // ---- Backend settings ----
-const BACKEND_URL = 'http://localhost:8080';
+const BACKEND_URL = 'http://51.158.191.212:8080';
 
 // ---- Ask the backend (/ask) instead of Ollama directly ----
 async function askBackend(question, orgId) {

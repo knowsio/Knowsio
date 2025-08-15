@@ -22,6 +22,7 @@ services:
       - "127.0.0.1:11434:11434"      # keep private
     environment:
       OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_NUM_PARALLEL: "4"
     volumes:
       - ollama:/root/.ollama
     healthcheck:
@@ -63,6 +64,7 @@ services:
       GEN_MODEL: knowsio:local
       DATABASE_URL: postgres://kb:kbpass@db:5432/kb
       PORT: "8080"
+      EMBED_CONCURRENCY: "3"
     depends_on:
       db:
         condition: service_healthy

@@ -32,6 +32,28 @@ app.get('/health', async (_req, res) => {
   res.json({ ok: true });
 });
 
+const EMBED_CONCURRENCY = parseInt(process.env.EMBED_CONCURRENCY || '3', 10);
+
+// tiny concurrency helper
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0, inFlight = 0;
+  return new Promise((resolve, reject) => {
+    const next = () => {
+      if (i >= items.length && inFlight === 0) return resolve(out);
+      while (inFlight < limit && i < items.length) {
+        const idx = i++;
+        inFlight++;
+        Promise.resolve(fn(items[idx], idx))
+          .then(v => { out[idx] = v; })
+          .catch(reject)
+          .finally(() => { inFlight--; next(); });
+      }
+    };
+    next();
+  });
+}
+
 /**
  * Upload endpoint
  *  /upload?layer=domain
@@ -41,13 +63,20 @@ app.get('/health', async (_req, res) => {
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const { layer, org_id } = req.query;
+
     if (!layer || !['domain', 'org'].includes(layer)) {
       return res.status(400).json({ error: "Missing or invalid ?layer=domain|org" });
     }
     if (layer === 'org' && !org_id) {
       return res.status(400).json({ error: "Missing ?org_id=..." });
     }
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
+    }
+
+    console.time('[upload] total');
+    console.log(`[upload] file="${req.file.originalname}" type=${req.file.mimetype} size=${req.file.size}B layer=${layer} org_id=${org_id || '-'}`);
+    console.time('[upload] extract');
 
     const text = await extractText({
       buffer: req.file.buffer,
@@ -55,12 +84,31 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       originalname: req.file.originalname
     });
 
-    const chunks = chunkText(text);
-    const stored = [];
+    console.timeEnd('[upload] extract');
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Uploaded file contains no extractable text' });
+    }
 
-    for (let idx = 0; idx < chunks.length; idx++) {
-      const ch = chunks[idx];
+    // Chunking — keep your existing chunker. (To speed up, increase its chunk size & reduce overlap in its implementation.)
+    const chunks = chunkText(text); // e.g., target ~800–1000 chars with 80–120 overlap inside chunkText
+    console.log(`[upload] chunks=${chunks.length} concurrency=${EMBED_CONCURRENCY}`);
+
+    const table = layer === 'org' ? 'kb_org' : 'kb_domain';
+    const stored = [];
+    let okCount = 0, failCount = 0;
+
+    console.time('[upload] embed+insert');
+
+    await mapLimit(chunks, EMBED_CONCURRENCY, async (ch, idx) => {
+      // progress every 10 chunks
+      if (idx % 10 === 0 || idx === chunks.length - 1) {
+        console.log(`[upload] progress ${idx + 1}/${chunks.length}`);
+      }
+
+      // 1) embed
       const vec = await embed(ch);
+
+      // 2) metadata
       const id = uuidv4();
       const metadata = {
         source: req.file.originalname,
@@ -68,22 +116,40 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         org_id: layer === 'org' ? org_id : undefined,
         part: idx + 1,
         total_parts: chunks.length,
-        kb_version: new Date().toISOString().slice(0,10)
+        kb_version: new Date().toISOString().slice(0, 10)
       };
+
+      // 3) insert
       await insertChunk({
-        table: layer === 'org' ? 'kb_org' : 'kb_domain',
+        table,
         id,
         text: ch,
         metadata,
         embedding: vec
       });
-      stored.push({ id, part: idx + 1 });
-    }
 
-    res.json({ ok: true, parts: stored.length, chunks: stored });
+      stored[idx] = { id, part: idx + 1 };
+      okCount++;
+    }).catch(err => {
+      // if any single chunk throws, we still want to know how far we got
+      console.error('[upload] error during embed/insert:', err);
+      throw err;
+    });
+
+    console.timeEnd('[upload] embed+insert');
+    console.timeEnd('[upload] total');
+
+    return res.json({
+      ok: true,
+      table,
+      parts: okCount,
+      failed: failCount,
+      chunks: stored.filter(Boolean)
+    });
+
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: String(e?.message || e) });
+    console.error('[upload] FAILED:', e);
+    return res.status(500).json({ error: String(e?.message || e) });
   }
 });
 
