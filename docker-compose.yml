@@ -83,17 +83,17 @@ services:
         max-file: "5"
     restart: unless-stopped
 
-frontend:
-  image: nginx:alpine
-  container_name: kb-frontend
-  volumes:
+  frontend:
+    image: nginx:alpine
+    container_name: kb-frontend
+    volumes:
     - ./AiSupport-Frontend:/usr/share/nginx/html:ro
     - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-  depends_on:
+    depends_on:
     - backend
-  ports:
-    - "80:80"
-  restart: unless-stopped
+    ports:
+      - "80:80"
+    restart: unless-stopped
 
 
 volumes:
