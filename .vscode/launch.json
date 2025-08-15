@@ -6,11 +6,11 @@
     "configurations": [
 
         {
-            "type": "pwa-chrome",
+            "type": "chrome",
             "request": "launch",
             "name": "Debug with live server",
-            "url": "http://localhost:5500/AiSupport-Frontend/index.html",
-            "webRoot": "${workspaceFolder}/AiSupport-Frontend"
+            "url": "AiSupport-Frontend/index.html",
+            "webRoot": "."
         }
     
     ]
