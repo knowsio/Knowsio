@@ -1,0 +1,25 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Frontend builds (adjust names if different)
+dist/
+build/
+
+# Node stuff (both frontend & backend)
+node_modules/
+
+# Backend secrets
+Aisupport-Backend/.env
+
+# Test/fixtures & local backups
+Aisupport-Backend/test/data/05-versions-space.pdf
+Aisupport-Backend/backups/
+
+# Docker volumes or local folders with data
+pgdata/
+ollama/
+
+# VS Code
+.vscode/

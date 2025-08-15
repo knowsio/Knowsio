@@ -1,0 +1,90 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: kb-pg
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kbpass
+      POSTGRES_DB: kb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollie
+    ports:
+      - "127.0.0.1:11434:11434"      # keep private
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    network_mode: "service:ollama"
+    entrypoint: ["/bin/sh","-lc"]
+    command: >
+      set -e;
+      MARKER="/root/.ollama/.init-knowsio-v1";
+      if [ -f "$MARKER" ]; then echo "init already done — skipping"; exit 0; fi;
+      until ollama list >/dev/null 2>&1; do sleep 1; done;
+      need() { ! ollama show "$1" >/dev/null 2>&1; };
+      need nomic-embed-text && ollama pull nomic-embed-text || echo "embed present";
+      need llama3.2:3b-instruct-q4_0 && ollama pull llama3.2:3b-instruct-q4_0 || echo "chat present";
+      need knowsio:local && ollama cp llama3.2:3b-instruct-q4_0 knowsio:local || echo "alias present";
+      touch "$MARKER"; echo "init complete.";
+
+  backend:
+    build: ./Aisupport-Backend   # make sure this path matches your folder name exactly
+    container_name: kb-backend
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      EMBED_MODEL: nomic-embed-text
+      GEN_MODEL: knowsio:local
+      DATABASE_URL: postgres://kb:kbpass@db:5432/kb
+      PORT: "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ollama:
+    external: true   # reuse your existing models volume named "ollama"
+    name: ollama
