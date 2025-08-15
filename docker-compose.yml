@@ -72,8 +72,6 @@ services:
         condition: service_healthy
       ollama-init:
         condition: service_completed_successfully
-    ports:
-      - "8080:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
       interval: 5s
@@ -83,6 +81,29 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:alpine
+    container_name: kb-frontend
+    volumes:
+      - ./AiSupport-Frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    # no ports; Caddy will be the only public entry point
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    container_name: kb-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - frontend
+      - backend
     restart: unless-stopped
 
 volumes:
