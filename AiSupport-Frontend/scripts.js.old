@@ -1,0 +1,103 @@
+function loadPage(page) {
+  fetch(`${page}.html`)
+    .then(response => response.text())
+    .then(html => {
+      document.getElementById('content').innerHTML = html;
+      if (page === 'lotte') initLotte();
+      if (page === 'lara') initLara();
+    });
+}
+
+window.onload = () => loadPage('lara');
+
+// Lotte logic
+
+async function initLotte() {
+  
+}
+
+// ---- Lara logic (Ollama-powered) ----
+
+const OLLAMA_URL = 'http://localhost:11434/api/generate'; // change if needed
+const OLLAMA_MODEL = 'llama3.1:8b'; // change to the model you run in Ollama
+
+async function askOllama(prompt, onToken) {
+  const res = await fetch(OLLAMA_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: OLLAMA_MODEL,
+      prompt,
+      stream: true
+    })
+  });
+
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Ollama request failed (${res.status}). ${text}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let full = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    const lines = chunk.split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const json = JSON.parse(line);
+        if (json.response) {
+          full += json.response;
+          if (onToken) onToken(full, json.response);
+        }
+        if (json.done) return full;
+      } catch (e) {
+        // ignore partial JSON lines between chunks
+      }
+    }
+  }
+  return full;
+}
+
+function initLara() {
+  const input = document.getElementById('laraPrompt');
+  const answer = document.getElementById('laraAnswer');
+  const btn = document.getElementById('laraAskBtn');
+  const status = document.getElementById('laraStatus');
+
+  async function go() {
+    const q = (input.value || '').trim();
+    if (!q) {
+      input.focus();
+      return;
+    }
+    btn.disabled = true;
+    btn.classList.add('opacity-60', 'cursor-not-allowed');
+    answer.textContent = '';
+    status.textContent = 'Lara denkt na…';
+
+    try {
+      await askOllama(q, (full) => {
+        answer.textContent = full;
+      });
+      status.textContent = 'Klaar.';
+    } catch (err) {
+      status.textContent = '';
+      answer.textContent = `⚠️ Kan geen verbinding maken met Ollama. Is het actief op ${OLLAMA_URL}? \n\nFout: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('opacity-60', 'cursor-not-allowed');
+    }
+  }
+
+  btn.addEventListener('click', go);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      go();
+    }
+  });
+}
