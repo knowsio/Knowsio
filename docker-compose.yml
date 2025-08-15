@@ -100,7 +100,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      -   - ./caddy:/etc/caddy:ro   # <-- directory-to-directory
     depends_on:
       - frontend
       - backend
