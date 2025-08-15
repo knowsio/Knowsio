@@ -47,13 +47,13 @@ services:
     command: >
       set -e;
       MARKER="/root/.ollama/.init-knowsio-v1";
-      if [ -f "$MARKER" ]; then echo "init already done — skipping"; exit 0; fi;
+      if [ -f "$$MARKER" ]; then echo "init already done — skipping"; exit 0; fi;
       until ollama list >/dev/null 2>&1; do sleep 1; done;
-      need() { ! ollama show "$1" >/dev/null 2>&1; };
+      need() { ! ollama show "$$1" >/dev/null 2>&1; };
       need nomic-embed-text && ollama pull nomic-embed-text || echo "embed present";
       need llama3.2:3b-instruct-q4_0 && ollama pull llama3.2:3b-instruct-q4_0 || echo "chat present";
       need knowsio:local && ollama cp llama3.2:3b-instruct-q4_0 knowsio:local || echo "alias present";
-      touch "$MARKER"; echo "init complete.";
+      touch "$$MARKER"; echo "init complete.";
 
   backend:
     build: ./Aisupport-Backend   # make sure this path matches your folder name exactly
