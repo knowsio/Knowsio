@@ -91,7 +91,6 @@ services:
      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
      - ./certbot/www:/var/www/certbot              # ACME webroot
-     - ./certbot/conf:/etc/letsencrypt:ro          # certs (read-only for nginx)
    depends_on:
      - backend
    ports:
