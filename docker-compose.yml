@@ -52,7 +52,6 @@ services:
       need() { ! ollama show "$$1" >/dev/null 2>&1; };
       need nomic-embed-text && ollama pull nomic-embed-text || echo "embed present";
       need llama3.2:3b-instruct-q4_0 && ollama pull llama3.2:3b-instruct-q4_0 || echo "chat present";
-      need knowsio:local && ollama cp llama3.2:3b-instruct-q4_0 knowsio:local || echo "alias present";
       touch "$$MARKER"; echo "init complete.";
 
   backend:
@@ -61,7 +60,7 @@ services:
     environment:
       OLLAMA_URL: http://ollama:11434
       EMBED_MODEL: nomic-embed-text
-      GEN_MODEL: knowsio:local
+      GEN_MODEL: llama3.2:3b-instruct-q4_0
       DATABASE_URL: postgres://kb:kbpass@db:5432/kb
       PORT: "8080"
       EMBED_CONCURRENCY: "3"
