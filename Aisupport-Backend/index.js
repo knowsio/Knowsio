@@ -9,6 +9,7 @@ import { chunkText } from './chunk.js';
 import { extractText } from './ingest.js';
 import { renderPrompt } from './prompt.js';
 import { ensureSchema } from './db.js';
+import axios from 'axios';
 
 dotenv.config();
 const app = express();
@@ -33,6 +34,45 @@ app.get('/health', async (_req, res) => {
 });
 
 const EMBED_CONCURRENCY = parseInt(process.env.EMBED_CONCURRENCY || '3', 10);
+
+// --- simple request id
+function rid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+// --- step logger + watchdog timeout
+async function withStep(id, label, fn, timeoutMs = 15000) {
+  const t0 = Date.now();
+  console.log(`[STEP][${id}] ${label} start`);
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Step "${label}" timed out after ${timeoutMs}ms`)), timeoutMs)
+  );
+  try {
+    const result = await Promise.race([Promise.resolve().then(fn), timeout]);
+    console.log(`[STEP][${id}] ${label} ok ${Date.now() - t0}ms`);
+    return result;
+  } catch (e) {
+    console.error(`[STEP][${id}] ${label} FAIL ${Date.now() - t0}ms`, e);
+    throw e;
+  }
+}
+
+// --- ollama /api/generate with explicit timeout & options
+async function generateWithTimeout({ url, model, prompt, options = {}, timeoutMs = 60000 }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(`LLM generate timeout after ${timeoutMs}ms`), timeoutMs);
+  try {
+    const { data } = await axios.post(
+      `${url}/api/generate`,
+      { model, prompt, options, stream: false },
+      { signal: controller.signal }
+    );
+    // Ollama returns { response: "...", done: true } in JSON mode
+    return typeof data === 'string' ? data : (data.response ?? data);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // tiny concurrency helper
 async function mapLimit(items, limit, fn) {
