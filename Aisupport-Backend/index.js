@@ -224,14 +224,14 @@ app.post('/ask', async (req, res) => {
     console.log(`[ASK][${id}] question="${String(question).slice(0,120)}"${question.length>120?'…':''} org=${org_id||'-'}`);
 
     // 1) Embed
-    const qvec = await withStep(id, 'embed', async () => embed(question), TIMEOUT_EMBED);
+    const qvec = await withStep(id, 'embed', async () => embed(question), TIMEOUTS.EMBED);
 
     // 2) Search (parallel; each logged separately)
     const [orgSnips, domainSnips] = await Promise.all([
       org_id
-        ? withStep(id, 'searchOrg', async () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), TIMEOUT_SEARCH)
+        ? withStep(id, 'searchOrg', async () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), TIMEOUTS.SEARCH)
         : Promise.resolve([]),
-      withStep(id, 'searchDomain', async () => searchDomain({ queryEmbedding: qvec, limit: k2 }), TIMEOUT_SEARCH)
+      withStep(id, 'searchDomain', async () => searchDomain({ queryEmbedding: qvec, limit: k2 }), TIMEOUTS.SEARCH)
     ]);
 
     // 3) Build context/prompt
@@ -242,7 +242,7 @@ app.post('/ask', async (req, res) => {
     await withStep(id, 'buildPrompt', async () => {
       // light work, but we still log it
       return renderPrompt({ contextSnippets, question });
-    }, TIMEOUT_BUILD_PROMPT);
+    }, TIMEOUTS.BUILD_PROMPT);
     const prompt = renderPrompt({ contextSnippets, question });
 
     // 4) Generate (fast demo defaults; override with llmOptions)
@@ -262,9 +262,9 @@ app.post('/ask', async (req, res) => {
         model: process.env.GEN_MODEL,
         prompt,
         options: { ...fastDefaults, ...(llmOptions || {}) },
-        timeoutMs: TIMEOUT_GENERATE   // cap single LLM call to 60s for demos
+        timeoutMs: TIMEOUTS.GENERATE   // cap single LLM call to 60s for demos
       }),
-      TIMEOUT_GENERATE               // step watchdog slightly higher than fetch timeout
+      TIMEOUTS.GENERATE               // step watchdog slightly higher than fetch timeout
     );
 
     const total = Date.now() - T0;
