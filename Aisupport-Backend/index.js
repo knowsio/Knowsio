@@ -10,6 +10,8 @@ import { extractText } from './ingest.js';
 import { renderPrompt } from './prompt.js';
 import { ensureSchema } from './db.js';
 import axios from 'axios';
+import { generateLLM } from './llm.js';
+import { listProviders, PROVIDERS } from './llm-config.js';
 
 dotenv.config();
 const app = express();
@@ -213,39 +215,54 @@ app.post('/upload', upload.single('file'), async (req, res) => {
  * body: { question: string, org_id?: string, k1?: number, k2?: number }
  */
 // make sure you have: app.use(express.json()) somewhere above
+// ⇢ Replace your entire /ask handler with this:
 app.post('/ask', async (req, res) => {
   const id = rid();
   const T0 = Date.now();
 
+  // Allow UI to pass provider + per-call timeout; fall back to env/defaults
+  const {
+    provider: reqProvider,
+    llmOptions = {},
+    genTimeoutMs
+  } = req.body || {};
+
+  const provider = (reqProvider || process.env.PROVIDER || 'OLLAMA').toUpperCase();
+  if (!PROVIDERS[provider]) {
+    return res.status(400).json({ error: `Unsupported provider: ${provider}` });
+  }
+  const model = PROVIDERS[provider].defaultModel;
+
   try {
-    const { question, org_id, k1 = 3, k2 = 3, max_ctx = 4, llmOptions = {} } = req.body || {};
+    const { question, org_id, k1 = 3, k2 = 3, max_ctx = 4 } = req.body || {};
     if (!question) return res.status(400).json({ error: 'question is required' });
 
-    console.log(`[ASK][${id}] question="${String(question).slice(0,120)}"${question.length>120?'…':''} org=${org_id||'-'}`);
+    console.log(`[ASK][${id}] question="${String(question).slice(0,120)}"${question.length>120?'…':''} org=${org_id || '-'}`);
 
     // 1) Embed
-    const qvec = await withStep(id, 'embed', async () => embed(question), TIMEOUTS.EMBED);
+    const qvec = await withStep(id, 'embed', () => embed(question), TIMEOUTS.EMBED);
 
-    // 2) Search (parallel; each logged separately)
+    // 2) Search (parallel)
     const [orgSnips, domainSnips] = await Promise.all([
       org_id
-        ? withStep(id, 'searchOrg', async () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), TIMEOUTS.SEARCH)
+        ? withStep(id, 'searchOrg', () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), TIMEOUTS.SEARCH)
         : Promise.resolve([]),
-      withStep(id, 'searchDomain', async () => searchDomain({ queryEmbedding: qvec, limit: k2 }), TIMEOUTS.SEARCH)
+      withStep(id, 'searchDomain', () => searchDomain({ queryEmbedding: qvec, limit: k2 }), TIMEOUTS.SEARCH)
     ]);
 
-    // 3) Build context/prompt
+    // 3) Build prompt
     const contextSnippets = [...orgSnips, ...domainSnips]
       .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0))
       .slice(0, max_ctx);
 
-    await withStep(id, 'buildPrompt', async () => {
-      // light work, but we still log it
-      return renderPrompt({ contextSnippets, question });
-    }, TIMEOUTS.BUILD_PROMPT);
-    const prompt = renderPrompt({ contextSnippets, question });
+    const prompt = await withStep(
+      id,
+      'buildPrompt',
+      () => renderPrompt({ contextSnippets, question }),
+      TIMEOUTS.BUILD_PROMPT
+    );
 
-    // 4) Generate (fast demo defaults; override with llmOptions)
+    // 4) Generate
     const fastDefaults = {
       num_ctx: 1024,
       num_predict: 256,
@@ -256,29 +273,29 @@ app.post('/ask', async (req, res) => {
 
     const answer = await withStep(
       id,
-      `generate(${process.env.GEN_MODEL})`,
-      async () => generateWithTimeout({
-        url: process.env.OLLAMA_URL,
-        model: process.env.GEN_MODEL,
+      `generate(${provider}:${model})`,
+      () => generateLLM({
+        provider,
+        model,
         prompt,
         options: { ...fastDefaults, ...(llmOptions || {}) },
-        timeoutMs: TIMEOUTS.GENERATE   // cap single LLM call to 60s for demos
+        timeoutMs: genTimeoutMs || TIMEOUTS.GENERATE
       }),
-      TIMEOUTS.GENERATE               // step watchdog slightly higher than fetch timeout
+      stepTimeout(genTimeoutMs || TIMEOUTS.GENERATE)
     );
 
     const total = Date.now() - T0;
-    console.log(
-      `[ASK][${id}] DONE total=${total}ms hits{org=${orgSnips.length},dom=${domainSnips.length}} ctx=${contextSnippets.length}`
-    );
+    console.log(`[ASK][${id}] DONE total=${total}ms hits{org=${orgSnips.length},dom=${domainSnips.length}} ctx=${contextSnippets.length}`);
 
-    res.json({
+    // Unified "used" block
+    return res.json({
       answer,
       used: {
+        provider,
+        model,
         org_id: org_id || null,
         org_hits: orgSnips.length,
-        domain_hits: domainSnips.length,
-        model: process.env.GEN_MODEL
+        domain_hits: domainSnips.length
       },
       context: contextSnippets.map(s => ({
         id: s.id,
@@ -290,7 +307,7 @@ app.post('/ask', async (req, res) => {
 
   } catch (e) {
     console.error(`[ASK][${id}] FAIL:`, e);
-    res.status(500).json({ error: String(e?.message || e) });
+    return res.status(500).json({ error: String(e?.message || e) });
   }
 });
 
@@ -304,3 +321,7 @@ ensureSchema()
     console.error('DB init failed:', err);
     process.exit(1);
   });
+
+app.get('/llm/providers', (_req, res) => {
+  res.json({ providers: listProviders() }); // no secrets
+});
