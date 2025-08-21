@@ -11,7 +11,7 @@ import { renderPrompt } from './prompt.js';
 import { ensureSchema } from './db.js';
 import axios from 'axios';
 import { generateLLM } from './llm.js';
-import { listProviders, PROVIDERS } from './llm-config.js';
+import { listProviders, PROVIDERS } from './llm.js';
 
 dotenv.config();
 const app = express();
