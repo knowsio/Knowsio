@@ -12,7 +12,7 @@ import { ensureSchema } from './db.js';
 import axios from 'axios';
 import { generateLLM } from './llm.js';
 import { listProviders, PROVIDERS } from './llm.js';
-import { listOrganizations } from './org-config.js';
+import { listOrganizations } from './organizations.js';
 import { createUser, authenticate, requireAuth, requireRole } from './auth.js';
 
 
