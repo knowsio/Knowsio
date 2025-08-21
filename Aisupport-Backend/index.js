@@ -400,16 +400,6 @@ app.post('/ask', async (req, res) => {
   }
 });
 
-const port = process.env.PORT || 8080;
-
-ensureSchema()
-  .then(() => {
-    app.listen(port, () => console.log(`KB server on :${port}`));
-  })
-  .catch(err => {
-    console.error('DB init failed:', err);
-    process.exit(1);
-  });
 
 app.get('/llm/providers', (_req, res) => {
   res.json({ providers: listProviders() }); // no secrets
@@ -494,3 +484,21 @@ app.get('/config', requireAuth, (req, res) => {
     organizations: listOrganizations(),
   });
 });
+
+//------------------ROUTES ABOVE HERE ----------------------------
+
+const port = process.env.PORT || 8080;
+
+
+// ---- boot ----
+Promise.resolve()
+  .then(() => ensureSchema())        // KB tables
+  .then(() => ensureAuthSchema())    // users + organizations tables
+  .then(() => seedOrganizations(ORGANIZATIONS))
+  .then(() => {
+    app.listen(port, () => console.log(`KB server on :${port}`));
+  })
+  .catch(err => {
+    console.error('DB init failed:', err);
+    process.exit(1);
+  });
