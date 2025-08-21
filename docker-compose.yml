@@ -24,7 +24,7 @@ services:
       OLLAMA_KEEP_ALIVE: 30m
       OLLAMA_NUM_PARALLEL: "4"
     volumes:
-      - ollama:/root/.ollama
+      - /mnt/bigspace/ollama:/models # bind-mount to your big disk
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 5s
