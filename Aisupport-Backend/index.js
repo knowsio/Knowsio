@@ -3,25 +3,34 @@ import multer from 'multer';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
-import { pool, insertChunk, searchOrg, searchDomain } from './db.js';
-import { embed, generate } from './ollama.js';
+import axios from 'axios';
+
+import { pool, insertChunk, searchOrg, searchDomain, ensureSchema } from './db.js';
+import { embed } from './ollama.js';
 import { chunkText } from './chunk.js';
 import { extractText } from './ingest.js';
 import { renderPrompt } from './prompt.js';
-import axios from 'axios';
-import { generateLLM } from './llm.js';
-import { listProviders, PROVIDERS } from './llm.js';
-import { listOrganizations } from './organizations.js';
-import { createUser, authenticate, requireAuth, requireRole } from './auth.js';
-import { ensureAuthSchema} from './db.js';
-import { ORGANIZATIONS, listOrganizations as listOrgsStatic } from './organizations.js';
-import { hashPassword, verifyPassword, issueToken, requireAuth, requireRole } from './auth.js';
 
+import { generateLLM, listProviders, PROVIDERS } from './llm.js';
+import { ORGANIZATIONS, listOrganizations as listOrgsStatic } from './organizations.js';
+
+import {
+  createUser,
+  authenticate,
+  requireAuth,
+  requireRole,
+  hashPassword,
+  verifyPassword,
+  issueToken,
+  getUserByEmail,
+  listUsers,
+  updateUser,
+  seedOrganizations,
+} from './auth.js';
 
 dotenv.config();
 const app = express();
 
-// Adjust allowed origins as needed for your frontend
 app.use(cors({
   origin: [
     'http://localhost:5500',
@@ -30,7 +39,6 @@ app.use(cors({
     'http://127.0.0.1:5173'
   ]
 }));
-
 app.use(express.json({ limit: '2mb' }));
 const upload = multer({ limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
 
@@ -46,25 +54,16 @@ const EMBED_CONCURRENCY = parseInt(process.env.EMBED_CONCURRENCY || '3', 10);
 // Timeout constants
 // --------------------
 const TIMEOUTS = {
-  EMBED: parseInt(process.env.TIMEOUT_EMBED || '15000', 10),         // 15s
-  SEARCH: parseInt(process.env.TIMEOUT_SEARCH || '15000', 10),       // 15s
+  EMBED: parseInt(process.env.TIMEOUT_EMBED || '15000', 10),              // 15s
+  SEARCH: parseInt(process.env.TIMEOUT_SEARCH || '15000', 10),            // 15s
   BUILD_PROMPT: parseInt(process.env.TIMEOUT_BUILD_PROMPT || '2000', 10), // 2s
-  GENERATE: parseInt(process.env.TIMEOUT_GENERATE || '540000', 10),  // 9 min (below nginx 10m)
+  GENERATE: parseInt(process.env.TIMEOUT_GENERATE || '540000', 10),       // 9 min
 };
-
-// Step watchdog should always be a bit longer than the action itself
 const STEP_MARGIN = 5000;
-function stepTimeout(ms) {
-  return ms + STEP_MARGIN;
-}
+function stepTimeout(ms) { return ms + STEP_MARGIN; }
 
-// --------------------
 // Helpers
-// --------------------
-function rid() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
+function rid() { return Math.random().toString(36).slice(2, 10); }
 async function withStep(id, label, fn, timeoutMs = TIMEOUTS.GENERATE) {
   const t0 = Date.now();
   console.log(`[STEP][${id}] ${label} start`);
@@ -81,331 +80,28 @@ async function withStep(id, label, fn, timeoutMs = TIMEOUTS.GENERATE) {
   }
 }
 
-async function generateWithTimeout({ url, model, prompt, options = {}, timeoutMs = TIMEOUTS.GENERATE }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(`LLM generate timeout after ${timeoutMs}ms`), timeoutMs);
-  try {
-    const { data } = await axios.post(
-      `${url}/api/generate`,
-      { model, prompt, options, stream: false },
-      { signal: controller.signal }
-    );
-    return typeof data === 'string' ? data : (data.response ?? data);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// tiny concurrency helper
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let i = 0, inFlight = 0;
-  return new Promise((resolve, reject) => {
-    const next = () => {
-      if (i >= items.length && inFlight === 0) return resolve(out);
-      while (inFlight < limit && i < items.length) {
-        const idx = i++;
-        inFlight++;
-        Promise.resolve(fn(items[idx], idx))
-          .then(v => { out[idx] = v; })
-          .catch(reject)
-          .finally(() => { inFlight--; next(); });
-      }
-    };
-    next();
-  });
-}
-
+// -------------------- AUTH --------------------
 app.post('/auth/bootstrap-admin', async (req, res) => {
   try {
-    const { email, password, org_key, provider } = req.body || {};
+    const { email, password, org_key='MMM', provider='OLLAMA' } = req.body || {};
     if (!email || !password || !org_key || !provider) {
       return res.status(400).json({ error: 'email, password, org_key, provider are required' });
     }
-    const existing = await getUserByEmail(email);
-    if (existing) return res.status(409).json({ error: 'email already exists' });
 
-    // check if any admin exists
+    // if any admin exists, new one becomes 'user'; first one becomes 'admin'
     const { rows } = await pool.query(`SELECT 1 FROM users WHERE role='admin' LIMIT 1`);
     const role = rows.length ? 'user' : 'admin';
 
-    const passwordHash = await hashPassword(password);
-    const user = await createUser({ email, passwordHash, role, org_key, provider });
-    const token = issueToken({ ...user });
+    const exists = await getUserByEmail(email);
+    if (exists) return res.status(409).json({ error: 'email already exists' });
+
+    const user = await createUser({ email, password, role, org_key, provider });
+    const token = issueToken(user);
     res.json({ ok: true, user, token, roleAssigned: role });
   } catch (e) {
     console.error('/auth/bootstrap-admin FAIL', e);
     res.status(500).json({ error: String(e?.message || e) });
   }
-});
-
-app.post('/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'email, password required' });
-    const user = await getUserByEmail(email);
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-    const ok = await verifyPassword(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = issueToken(user);
-    res.json({
-      token,
-      profile: { id: user.id, email: user.email, role: user.role, org_key: user.org_key, provider: user.provider }
-    });
-  } catch (e) {
-    console.error('/auth/login FAIL', e);
-    res.status(500).json({ error: String(e?.message || e) });
-  }
-});
-
-app.get('/me', requireAuth, (req, res) => {
-  res.json({ user: req.user });
-});
-
-// admin user management
-app.get('/users', requireAuth, requireRole('admin'), async (_req, res) => {
-  res.json({ users: await listUsers() });
-});
-app.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
-  try {
-    const { email, password, role='user', org_key, provider } = req.body || {};
-    if (!email || !password || !org_key || !provider) return res.status(400).json({ error: 'missing fields' });
-    const existing = await getUserByEmail(email);
-    if (existing) return res.status(409).json({ error: 'email already exists' });
-    const passwordHash = await hashPassword(password);
-    const user = await createUser({ email, passwordHash, role, org_key, provider });
-    res.json({ ok: true, user });
-  } catch (e) {
-    res.status(500).json({ error: String(e?.message || e) });
-  }
-});
-app.patch('/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const patch = {};
-    for (const k of ['role','org_key','provider']) if (req.body[k]) patch[k] = req.body[k];
-    if (req.body.password) patch.password_hash = await hashPassword(req.body.password);
-    const user = await updateUser(id, patch);
-    if (!user) return res.status(404).json({ error: 'not found' });
-    res.json({ ok: true, user });
-  } catch (e) {
-    res.status(500).json({ error: String(e?.message || e) });
-  }
-});
-
-// organizations list for UI dropdowns
-app.get('/organizations', requireAuth, async (_req, res) => {
-  const { rows } = await pool.query(`SELECT key,label FROM organizations ORDER BY key`);
-  res.json({ organizations: rows.length ? rows : listOrgsStatic() });
-});
-
-/**
- * Upload endpoint
- *  /upload?layer=domain
- *  /upload?layer=org&org_id=hospital-x
- * field name: file
- */
-app.post('/upload', upload.single('file'), async (req, res) => {
-  try {
-    const { layer, org_id } = req.query;
-
-    if (!layer || !['domain', 'org'].includes(layer)) {
-      return res.status(400).json({ error: "Missing or invalid ?layer=domain|org" });
-    }
-    if (layer === 'org' && !org_id) {
-      return res.status(400).json({ error: "Missing ?org_id=..." });
-    }
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
-    }
-
-    console.time('[upload] total');
-    console.log(`[upload] file="${req.file.originalname}" type=${req.file.mimetype} size=${req.file.size}B layer=${layer} org_id=${org_id || '-'}`);
-    console.time('[upload] extract');
-
-    const text = await extractText({
-      buffer: req.file.buffer,
-      mimetype: req.file.mimetype,
-      originalname: req.file.originalname
-    });
-
-    console.timeEnd('[upload] extract');
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: 'Uploaded file contains no extractable text' });
-    }
-
-    // Chunking — keep your existing chunker. (To speed up, increase its chunk size & reduce overlap in its implementation.)
-    const chunks = chunkText(text); // e.g., target ~800–1000 chars with 80–120 overlap inside chunkText
-    console.log(`[upload] chunks=${chunks.length} concurrency=${EMBED_CONCURRENCY}`);
-
-    const table = layer === 'org' ? 'kb_org' : 'kb_domain';
-    const stored = [];
-    let okCount = 0, failCount = 0;
-
-    console.time('[upload] embed+insert');
-
-    await mapLimit(chunks, EMBED_CONCURRENCY, async (ch, idx) => {
-      // progress every 10 chunks
-      if (idx % 10 === 0 || idx === chunks.length - 1) {
-        console.log(`[upload] progress ${idx + 1}/${chunks.length}`);
-      }
-
-      // 1) embed
-      const vec = await embed(ch);
-
-      // 2) metadata
-      const id = uuidv4();
-      const metadata = {
-        source: req.file.originalname,
-        layer,
-        org_id: layer === 'org' ? org_id : undefined,
-        part: idx + 1,
-        total_parts: chunks.length,
-        kb_version: new Date().toISOString().slice(0, 10)
-      };
-
-      // 3) insert
-      await insertChunk({
-        table,
-        id,
-        text: ch,
-        metadata,
-        embedding: vec
-      });
-
-      stored[idx] = { id, part: idx + 1 };
-      okCount++;
-    }).catch(err => {
-      // if any single chunk throws, we still want to know how far we got
-      console.error('[upload] error during embed/insert:', err);
-      throw err;
-    });
-
-    console.timeEnd('[upload] embed+insert');
-    console.timeEnd('[upload] total');
-
-    return res.json({
-      ok: true,
-      table,
-      parts: okCount,
-      failed: failCount,
-      chunks: stored.filter(Boolean)
-    });
-
-  } catch (e) {
-    console.error('[upload] FAILED:', e);
-    return res.status(500).json({ error: String(e?.message || e) });
-  }
-});
-
-/**
- * Ask endpoint
- * body: { question: string, org_id?: string, k1?: number, k2?: number }
- */
-// make sure you have: app.use(express.json()) somewhere above
-// ⇢ Replace your entire /ask handler with this:
-app.post('/ask', async (req, res) => {
-  const id = rid();
-  const T0 = Date.now();
-
-  // Allow UI to pass provider + per-call timeout; fall back to env/defaults
-  const {
-    provider: reqProvider,
-    llmOptions = {},
-    genTimeoutMs
-  } = req.body || {};
-
-  const provider = (reqProvider || process.env.PROVIDER || 'OLLAMA').toUpperCase();
-  if (!PROVIDERS[provider]) {
-    return res.status(400).json({ error: `Unsupported provider: ${provider}` });
-  }
-  const model = PROVIDERS[provider].defaultModel;
-
-  try {
-    const { question, org_id, k1 = 3, k2 = 3, max_ctx = 4 } = req.body || {};
-    if (!question) return res.status(400).json({ error: 'question is required' });
-
-    console.log(`[ASK][${id}] question="${String(question).slice(0,120)}"${question.length>120?'…':''} org=${org_id || '-'}`);
-
-    // 1) Embed
-    const qvec = await withStep(id, 'embed', () => embed(question), TIMEOUTS.EMBED);
-
-    // 2) Search (parallel)
-    const [orgSnips, domainSnips] = await Promise.all([
-      org_id
-        ? withStep(id, 'searchOrg', () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), TIMEOUTS.SEARCH)
-        : Promise.resolve([]),
-      withStep(id, 'searchDomain', () => searchDomain({ queryEmbedding: qvec, limit: k2 }), TIMEOUTS.SEARCH)
-    ]);
-
-    // 3) Build prompt
-    const contextSnippets = [...orgSnips, ...domainSnips]
-      .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0))
-      .slice(0, max_ctx);
-
-    const prompt = await withStep(
-      id,
-      'buildPrompt',
-      () => renderPrompt({ contextSnippets, question }),
-      TIMEOUTS.BUILD_PROMPT
-    );
-
-    // 4) Generate
-    const fastDefaults = {
-      num_ctx: 1024,
-      num_predict: 256,
-      temperature: 0.2,
-      top_p: 0.9,
-      top_k: 40
-    };
-
-    const answer = await withStep(
-      id,
-      `generate(${provider}:${model})`,
-      () => generateLLM({
-        provider,
-        model,
-        prompt,
-        options: { ...fastDefaults, ...(llmOptions || {}) },
-        timeoutMs: genTimeoutMs || TIMEOUTS.GENERATE
-      }),
-      stepTimeout(genTimeoutMs || TIMEOUTS.GENERATE)
-    );
-
-    const total = Date.now() - T0;
-    console.log(`[ASK][${id}] DONE total=${total}ms hits{org=${orgSnips.length},dom=${domainSnips.length}} ctx=${contextSnippets.length}`);
-
-    // Unified "used" block
-    return res.json({
-      answer,
-      used: {
-        provider,
-        model,
-        org_id: org_id || null,
-        org_hits: orgSnips.length,
-        domain_hits: domainSnips.length
-      },
-      context: contextSnippets.map(s => ({
-        id: s.id,
-        source: s.metadata?.source,
-        distance: s.distance
-      })),
-      timings_ms: { total }
-    });
-
-  } catch (e) {
-    console.error(`[ASK][${id}] FAIL:`, e);
-    return res.status(500).json({ error: String(e?.message || e) });
-  }
-});
-
-
-app.get('/llm/providers', (_req, res) => {
-  res.json({ providers: listProviders() }); // no secrets
-});
-
-app.get('/organizations', (_req, res) => {
-  res.json({ organizations: listOrganizations() });
 });
 
 app.post('/auth/login', async (req, res) => {
@@ -419,85 +115,21 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-// one-time bootstrap admin (remove/disable after first use)
-app.post('/auth/bootstrap-admin', async (req, res) => {
-  try {
-    const { email, password, org_key='MMM', provider='OLLAMA' } = req.body || {};
-    const exists = await pool.query(`SELECT 1 FROM users WHERE role='admin' LIMIT 1`);
-    if (exists.rowCount) return res.status(400).json({ error: 'admin already exists' });
-    const admin = await createUser({ email, password, role:'admin', org_key, provider });
-    res.json({ ok: true, admin });
-  } catch (e) {
-    res.status(400).json({ error: String(e?.message || e) });
-  }
+app.get('/me', requireAuth, (req, res) => {
+  res.json({ user: req.user });
 });
 
-// Admin user management
-app.post('/admin/users', requireAuth, requireRole('admin'), async (req, res) => {
+// ----- Admin user management -----
+app.get('/users', requireAuth, requireRole('admin'), async (_req, res) => {
+  res.json({ users: await listUsers() });
+});
+app.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { email, password, role='user', org_key, provider } = req.body || {};
     if (!email || !password || !org_key || !provider) return res.status(400).json({ error: 'missing fields' });
-    const u = await createUser({ email, password, role, org_key, provider });
-    res.json({ ok: true, user: u });
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'email already exists' });
+    const user = await createUser({ email, password, role, org_key, provider });
+    res.json({ ok: true, user });
   } catch (e) {
-    res.status(400).json({ error: String(e?.message || e) });
-  }
-});
-
-app.get('/admin/users', requireAuth, requireRole('admin'), async (_req, res) => {
-  const { rows } = await pool.query(`SELECT id, email, role, org_key, provider, created_at FROM users ORDER BY created_at DESC LIMIT 200`);
-  res.json({ users: rows });
-});
-
-app.patch('/admin/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
-  const { id } = req.params;
-  const { org_key, provider, role } = req.body || {};
-
-  const sets = []; const vals = []; let i = 1;
-  if (org_key)  { sets.push(`org_key=$${i++}`);  vals.push(org_key); }
-  if (provider) { sets.push(`provider=$${i++}`); vals.push(provider); }
-  if (role)     { sets.push(`role=$${i++}`);     vals.push(role); }
-  if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
-
-  vals.push(id);
-  await pool.query(`UPDATE users SET ${sets.join(', ')}, updated_at=now() WHERE id=$${i}`, vals);
-  res.json({ ok: true });
-});
-
-app.delete('/admin/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
-  await pool.query(`DELETE FROM users WHERE id=$1`, [req.params.id]);
-  res.json({ ok: true });
-});
-
-// Everything UI needs in one call
-app.get('/config', requireAuth, (req, res) => {
-  res.json({
-    me: {
-      id: req.user.sub,
-      email: req.user.email,
-      role: req.user.role,
-      org_key: req.user.org_key,
-      provider: req.user.provider,
-    },
-    providers: listProviders(),
-    organizations: listOrganizations(),
-  });
-});
-
-//------------------ROUTES ABOVE HERE ----------------------------
-
-const port = process.env.PORT || 8080;
-
-
-// ---- boot ----
-Promise.resolve()
-  .then(() => ensureSchema())        // KB tables
-  .then(() => ensureAuthSchema())    // users + organizations tables
-  .then(() => seedOrganizations(ORGANIZATIONS))
-  .then(() => {
-    app.listen(port, () => console.log(`KB server on :${port}`));
-  })
-  .catch(err => {
-    console.error('DB init failed:', err);
-    process.exit(1);
-  });
+    res.status(500).json({ error: String(e?.messa
