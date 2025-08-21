@@ -159,53 +159,66 @@ app.post('/upload', upload.single('file'), async (req, res) => {
  */
 // make sure you have: app.use(express.json()) somewhere above
 app.post('/ask', async (req, res) => {
+  const id = rid();
   const T0 = Date.now();
+
   try {
     const { question, org_id, k1 = 3, k2 = 3, max_ctx = 4, llmOptions = {} } = req.body || {};
     if (!question) return res.status(400).json({ error: 'question is required' });
 
+    console.log(`[ASK][${id}] question="${String(question).slice(0,120)}"${question.length>120?'…':''} org=${org_id||'-'}`);
+
     // 1) Embed
-    const t1 = Date.now();
-    const qvec = await embed(question);
-    const t2 = Date.now();
+    const qvec = await withStep(id, 'embed', async () => embed(question), 15000);
 
-    // 2) Retrieval (do both searches in parallel)
+    // 2) Search (parallel; each logged separately)
     const [orgSnips, domainSnips] = await Promise.all([
-      org_id ? searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }) : Promise.resolve([]),
-      searchDomain({ queryEmbedding: qvec, limit: k2 })
+      org_id
+        ? withStep(id, 'searchOrg', async () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), 15000)
+        : Promise.resolve([]),
+      withStep(id, 'searchDomain', async () => searchDomain({ queryEmbedding: qvec, limit: k2 }), 15000)
     ]);
-    const t3 = Date.now();
 
-    // 3) Build context (limit how much we feed to the model)
+    // 3) Build context/prompt
     const contextSnippets = [...orgSnips, ...domainSnips]
       .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0))
       .slice(0, max_ctx);
 
+    await withStep(id, 'buildPrompt', async () => {
+      // light work, but we still log it
+      return renderPrompt({ contextSnippets, question });
+    }, 2000);
     const prompt = renderPrompt({ contextSnippets, question });
 
-    // 4) Generate (fast demo defaults; override with req.body.llmOptions if you like)
+    // 4) Generate (fast demo defaults; override with llmOptions)
     const fastDefaults = {
       num_ctx: 1024,
-      num_predict: 256,     // cap output length
+      num_predict: 256,
       temperature: 0.2,
       top_p: 0.9,
       top_k: 40
     };
 
-    const data = await generate(prompt, {
-      stream: false,
-      options: { ...fastDefaults, ...(llmOptions || {}) }
-    });
-    const t4 = Date.now();
+    const answer = await withStep(
+      id,
+      `generate(${process.env.GEN_MODEL})`,
+      async () => generateWithTimeout({
+        url: process.env.OLLAMA_URL,
+        model: process.env.GEN_MODEL,
+        prompt,
+        options: { ...fastDefaults, ...(llmOptions || {}) },
+        timeoutMs: 60000   // cap single LLM call to 60s for demos
+      }),
+      65000               // step watchdog slightly higher than fetch timeout
+    );
 
-    // timing log
+    const total = Date.now() - T0;
     console.log(
-      `[ASK] embed=${t2 - t1}ms search=${t3 - t2}ms gen=${t4 - t3}ms total=${t4 - T0}ms ` +
-      `hits(org=${orgSnips.length}, dom=${domainSnips.length}) ctx=${contextSnippets.length} model=${process.env.GEN_MODEL}`
+      `[ASK][${id}] DONE total=${total}ms hits{org=${orgSnips.length},dom=${domainSnips.length}} ctx=${contextSnippets.length}`
     );
 
     res.json({
-      answer: data?.response || data || '',
+      answer,
       used: {
         org_id: org_id || null,
         org_hits: orgSnips.length,
@@ -217,19 +230,14 @@ app.post('/ask', async (req, res) => {
         source: s.metadata?.source,
         distance: s.distance
       })),
-      timings_ms: {
-        embed: t2 - t1,
-        search: t3 - t2,
-        generate: t4 - t3,
-        total: t4 - T0
-      }
+      timings_ms: { total }
     });
+
   } catch (e) {
-    console.error('[ASK] ERROR', e);
+    console.error(`[ASK][${id}] FAIL:`, e);
     res.status(500).json({ error: String(e?.message || e) });
   }
 });
-
 
 const port = process.env.PORT || 8080;
 
