@@ -25,7 +25,7 @@ import {
   getUserByEmail,
   listUsers,
   updateUser,
-  seedOrganizations,
+  seedOrganizations
 } from './auth.js';
 
 dotenv.config();
