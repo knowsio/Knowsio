@@ -1,91 +1,75 @@
 <!doctype html>
-<html lang="en">
+<html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <title>AiSupport</title>
+  <title>Knowsio</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" type="image/png" href="logo.png" />
+  <!-- Tailwind back (your pages depend on these utilities) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Your extra styles if any -->
+  <link rel="stylesheet" href="style.css">
   <style>
-    :root { --border:#e5e7eb; --muted:#6b7280; --bg:#f8fafc; --card:#ffffff; }
-    html,body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); }
-    .layout { display:grid; grid-template-columns: 260px 1fr; height:100vh; }
-    aside { background:#fff; border-right:1px solid var(--border); display:flex; flex-direction:column; }
-    .aside-content { padding:16px; overflow:auto; }
-    .aside-footer { margin-top:auto; border-top:1px solid var(--border); padding:12px 14px; font-size:13px; color:#111; background:#fff; }
-    .aside-footer .label { color:var(--muted); font-size:12px; }
-    .aside-footer .value { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .btn { cursor:pointer; background:#111827; color:#fff; border:0; padding:8px 12px; border-radius:8px; }
-    .btn.secondary { background:#eee; color:#111; }
-    main { padding:20px; overflow:auto; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
-    /* Login overlay */
+    /* minimal extras for login overlay (not in Tailwind) */
     #login-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:50; }
-    #login-box { width:340px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
-    #login-box h2 { margin:0 0 12px; font-size:18px; }
-    #login-form { display:grid; gap:10px; }
-    #login-form input { padding:10px; border-radius:8px; border:1px solid var(--border); font-size:14px; }
-    #login-error { color:#b91c1c; font-size:13px; min-height:18px; }
-    /* Hide app until authenticated */
-    #app-shell.hidden { visibility:hidden; }
   </style>
 </head>
-<body>
+<body class="bg-gray-100 text-gray-800">
+  <!-- Header -->
+  <header class="flex items-center p-4 bg-white shadow">
+    <img src="logo.png" alt="Knowsio Logo" class="h-10 w-auto">
+    <h1 class="ml-3 text-xl font-semibold text-gray-800">Knowsio</h1>
+  </header>
 
   <!-- App shell (hidden until /me succeeds) -->
-  <div id="app-shell" class="layout hidden">
-    <aside>
-      <div class="aside-content">
-        <h3 style="margin:0 0 12px;">Navigatie</h3>
-        <div class="nav-list">
-          <button class="nav-item" data-page="lara">
-            <img src="Lara_small.png" alt="Lara" onerror="this.style.display='none'"/>
-            <span>Lara</span>
-          </button>
-          <button class="nav-item" data-page="lotte">
-            <img src="Lotte_small.png" alt="Lotte" onerror="this.style.display='none'"/>
-            <span>Lotte</span>
-          </button>
-          <button class="nav-item" data-page="taken">
-            <span>📝</span>
-            <span>Takenlijst</span>
-          </button>
-        </div>
-      </div>
+  <div id="app-shell" class="flex h-[calc(100vh-4rem)] hidden">
+    <!-- Sidebar (original, tidy, small avatars) -->
+    <aside class="w-64 bg-white shadow-md p-4 flex flex-col">
+      <nav class="space-y-3">
+        <button onclick="loadPage('lara')" class="flex items-center space-x-2 w-full text-left py-2 px-3 rounded hover:bg-gray-200">
+          <img src="Lara_small.png" alt="Lara" class="w-6 h-6 rounded-full">
+          <span>Lara</span>
+        </button>
+        <button onclick="loadPage('lotte')" class="flex items-center space-x-2 w-full text-left py-2 px-3 rounded hover:bg-gray-200">
+          <img src="Lotte_small.png" alt="Lotte" class="w-6 h-6 rounded-full">
+          <span>Lotte</span>
+        </button>
+        <button onclick="loadPage('taken')" class="w-full text-left py-2 px-3 rounded hover:bg-gray-200">Takenlijst</button>
+      </nav>
 
-      <!-- User panel pinned to the bottom -->
-      <div id="user-panel" class="aside-footer" aria-live="polite">
-        <div class="label">Signed in</div>
-        <div class="value" id="user-email">—</div>
-        <div class="label" style="margin-top:6px;">Org / Provider</div>
-        <div class="value"><span id="user-org">—</span> · <span id="user-prov">—</span></div>
-        <button id="logout" class="btn secondary" style="margin-top:10px; width:100%;">Logout</button>
+      <!-- User panel pinned to bottom -->
+      <div class="mt-auto border-t pt-3 text-sm">
+        <div class="text-gray-500">Signed in</div>
+        <div class="truncate" id="user-email">—</div>
+        <div class="text-gray-500 mt-2">Org / Provider</div>
+        <div class="truncate"><span id="user-org">—</span> · <span id="user-prov">—</span></div>
+        <button id="logout" class="mt-3 w-full bg-gray-100 text-gray-900 py-2 rounded hover:bg-gray-200">Logout</button>
       </div>
     </aside>
 
-    <main id="content">
-      <!-- your main page content -->
-      <div class="card">
-        <h2>Welcome</h2>
-        <p>This content is visible only after login.</p>
-      </div>
+    <!-- Main content mount -->
+    <main id="content" class="flex-1 p-6 overflow-auto">
+      <!-- loadPage() will inject content here -->
     </main>
   </div>
 
   <!-- Login overlay -->
-  <div id="login-overlay" role="dialog" aria-modal="true">
-    <div id="login-box" class="card">
-      <h2>Sign in</h2>
-      <form id="login-form" autocomplete="on">
-        <input name="email" type="email" placeholder="email" required />
-        <input name="password" type="password" placeholder="password" required />
-        <div id="login-error"></div>
-        <button class="btn" type="submit">Login</button>
+  <div id="login-overlay" role="dialog" aria-modal="true" class="hidden">
+    <div class="w-[340px] bg-white border border-gray-200 rounded-xl p-5 shadow-xl">
+      <h2 class="text-lg font-semibold mb-3">Sign in</h2>
+      <form id="login-form" autocomplete="on" class="grid gap-3">
+        <input name="email" type="email" placeholder="email" required class="px-3 py-2 border rounded"/>
+        <input name="password" type="password" placeholder="password" required class="px-3 py-2 border rounded"/>
+        <div id="login-error" class="text-red-600 text-sm min-h-[18px]"></div>
+        <button class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-black" type="submit">Login</button>
       </form>
     </div>
   </div>
 
+  <!-- Auth + app wiring -->
   <script type="module">
     // ======== Config ========
-    const API = window.location.origin; // backend running in Docker on host 8080
+    const API = window.location.origin; // same-origin via Nginx
 
     // ======== Helpers ========
     const $ = (id) => document.getElementById(id);
@@ -111,30 +95,30 @@
     }
 
     function showApp(me) {
-      // Populate sidebar footer
       userEmail.textContent = me.email || '—';
       userOrg.textContent = me.org_key || '—';
       userProv.textContent = me.provider || '—';
 
-      loginOverlay.style.display = 'none';
+      loginOverlay.classList.add('hidden');
       appShell.classList.remove('hidden');
-      // Show default page
-      loadPage('lara');
+
+      // Load default page with Tailwind styling active
+      if (typeof loadPage === 'function') loadPage('lara');
     }
     function showLogin(errMsg = '') {
       appShell.classList.add('hidden');
-      loginOverlay.style.display = 'flex';
+      loginOverlay.classList.remove('hidden');
       loginError.textContent = errMsg;
     }
 
-    // ======== Bootstrap: try to authenticate via /me ========
+    // ======== Bootstrap: try token via /me ========
     (async () => {
       try {
-        const me = await api('/me').then(d => d.user); // { user: { email, org_key, provider, ... } }
+        const me = await api('/me').then(d => d.user);
         if (!me) throw new Error('No user');
         showApp(me);
       } catch {
-        showLogin(); // no token / invalid token → login first
+        showLogin();
       }
     })();
 
@@ -147,15 +131,12 @@
       const password = form.get('password');
 
       try {
-        // Your backend may return { token, user } OR { token, profile };
-        // we standardize by calling /me right after.
         const out = await api('/auth/login', {
           method:'POST',
           body: JSON.stringify({ email, password })
-        }); // /auth/login route exists in your server. 
-
+        });
         setToken(out.token);
-        const me = await api('/me').then(d => d.user); // requires Authorization header. 
+        const me = await api('/me').then(d => d.user);
         showApp(me);
       } catch (err) {
         showLogin(err.message);
@@ -168,6 +149,8 @@
       showLogin();
     });
   </script>
+
+  <!-- Your app logic: defines loadPage(), initLara(), initLotte(), etc. -->
   <script src="scripts.js"></script>
 </body>
 </html>
