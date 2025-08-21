@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -19,7 +21,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollie
     ports:
-      - "127.0.0.1:11434:11434"      # keep private
+      - "127.0.0.1:11434:11434"
     environment:
       OLLAMA_KEEP_ALIVE: 30m
       OLLAMA_NUM_PARALLEL: "4"
@@ -32,16 +34,13 @@ services:
       retries: 60
       start_period: 60s
     logging:
-      options:
-        max-size: "10m"
-        max-file: "5"
+      options: { max-size: "10m", max-file: "5" }
     restart: unless-stopped
 
   ollama-init:
     image: ollama/ollama:latest
     depends_on:
-      ollama:
-        condition: service_healthy
+      ollama: { condition: service_healthy }
     network_mode: "service:ollama"
     entrypoint: ["/bin/sh","-lc"]
     command: >
@@ -55,7 +54,8 @@ services:
       touch "$$MARKER"; echo "init complete.";
 
   backend:
-    build: ./Aisupport-Backend   # make sure this path matches your folder name exactly
+    build:
+      context: ./AiSupport-Backend   # <-- ensure the folder name & case are correct
     container_name: kb-backend
     environment:
       OLLAMA_URL: http://ollama:11434
@@ -65,53 +65,49 @@ services:
       PORT: "8080"
       EMBED_CONCURRENCY: "3"
     depends_on:
-      db:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
-      ollama-init:
-        condition: service_completed_successfully
+      db: { condition: service_healthy }
+      ollama: { condition: service_healthy }
+      ollama-init: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 40
     logging:
-      options:
-        max-size: "10m"
-        max-file: "5"
+      options: { max-size: "10m", max-file: "5" }
     restart: unless-stopped
 
   frontend:
-   image: nginx:alpine
-   container_name: kb-frontend
-   volumes:
-     - ./AiSupport-Frontend:/usr/share/nginx/html:ro
-     - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-     - /mnt/bigspace/certbot/conf:/etc/letsencrypt:ro
-     - /mnt/bigspace/certbot/www:/var/www/certbot
-   ports:
-     - "80:80"
-     - "443:443"    
-   depends_on:
-     - backend                       # <-- expose HTTPS
-   restart: unless-stopped
+    image: nginx:alpine
+    container_name: kb-frontend
+    volumes:
+      - ./AiSupport-Frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /mnt/bigspace/certbot/conf:/etc/letsencrypt:ro
+      - /mnt/bigspace/certbot/www:/var/www/certbot
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    restart: unless-stopped
 
   certbot:
-   profiles: ["prod"]
-   image: certbot/certbot:latest
-   container_name: kb-certbot
-   volumes:
+    profiles: ["prod"]
+    image: certbot/certbot:latest
+    container_name: kb-certbot
+    volumes:
       - /mnt/bigspace/certbot/conf:/etc/letsencrypt
       - /mnt/bigspace/certbot/www:/var/www/certbot
-   entrypoint: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet && nginx -s reload 2>/dev/null || true; sleep 12h & wait $!; done"
-   depends_on:
-     - frontend
-   restart: unless-stopped
-
+    entrypoint: >
+      sh -c "trap exit TERM;
+             while :; do
+               certbot renew --webroot -w /var/www/certbot --quiet || true;
+               sleep 12h & wait $!;
+             done"
+    depends_on:
+      - frontend
+    restart: unless-stopped
 
 volumes:
   pgdata:
-  ollama:
-    external: true   # reuse your existing models volume named "ollama"
-    name: ollama
