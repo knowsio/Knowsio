@@ -22,7 +22,8 @@
       Opnieuw inloggen
     </button>
   </header>
-
+  
+  <div id="login-root" class="p-6 hidden"></div>  
   <!-- App shell (hidden until /me succeeds) -->
   <div id="app-shell" class="flex h-[calc(100vh-4rem)] hidden">
     <!-- Sidebar (original, tidy, small avatars) -->
@@ -61,113 +62,119 @@
   <!-- Auth + app wiring -->
   
   <script type="module">
-  // ---- Config
-  const API = window.location.origin;
+    // ---- Config
+    const API = window.location.origin;
 
-  // ---- DOM helpers
-  const $ = (id) => document.getElementById(id);
-  const appShell   = $('app-shell');
-  const content    = $('content');         // main mount point
-  const logoutBtn  = $('logout');
-  const reloginBtn = $('reloginBtn');
-  const userEmail  = $('user-email');
-  const userOrg    = $('user-org');
-  const userProv   = $('user-prov');
+    // ---- DOM helpers
+    const $ = (id) => document.getElementById(id);
+    const appShell   = $('app-shell');
+    const loginRoot  = $('login-root');   // <— NEW
+    const content    = $('content');      // app page mount
+    const logoutBtn  = $('logout');
+    const reloginBtn = $('reloginBtn');
+    const userEmail  = $('user-email');
+    const userOrg    = $('user-org');
+    const userProv   = $('user-prov');
 
-  // ---- Token helpers
-  const setToken   = (t) => localStorage.setItem('token', t);
-  const getToken   = ()  => localStorage.getItem('token');
-  const clearToken = ()  => localStorage.removeItem('token');
+    // ---- Token helpers
+    const setToken   = (t) => localStorage.setItem('token', t);
+    const getToken   = ()  => localStorage.getItem('token');
+    const clearToken = ()  => localStorage.removeItem('token');
 
-  // ---- API with 401 → relogin
-  async function api(path, opts = {}) {
-    const headers = { ...(opts.headers||{}), 'Content-Type': 'application/json' };
-    const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
-    const res = await fetch(`${API}${path}`, { ...opts, headers });
+    // ---- API with 401 → relogin
+    async function api(path, opts = {}) {
+      const headers = { ...(opts.headers||{}), 'Content-Type': 'application/json' };
+      const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
+      const res = await fetch(`${API}${path}`, { ...opts, headers });
 
-    let data = null; try { data = await res.json(); } catch {}
-    if (res.status === 401) {
-      clearToken();
-      showLogin('Sessietoken is verlopen. Log opnieuw in.');
-      throw new Error('401 unauthorized');
-    }
-    if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
-    return data ?? {};
-  }
-
-  // ---- Login UI (renders INTO #content)
-  function renderLoginForm(message = '') {
-    content.innerHTML = `
-      <div class="max-w-sm mx-auto mt-16 bg-white border border-gray-200 rounded-xl p-5 shadow">
-        <h2 class="text-lg font-semibold mb-3">Sign in</h2>
-        ${message ? `<div class="mb-2 text-sm text-red-600">${message}</div>` : ''}
-        <form id="login-form" class="grid gap-3" autocomplete="on">
-          <input name="email" type="email" placeholder="email" required class="px-3 py-2 border rounded"/>
-          <input name="password" type="password" placeholder="password" required class="px-3 py-2 border rounded"/>
-          <button class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-black" type="submit">Login</button>
-        </form>
-      </div>
-    `;
-
-    const loginForm = $('login-form');
-    loginForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const form = new FormData(loginForm);
-      const email = form.get('email');
-      const password = form.get('password');
-      try {
-        const out = await api('/auth/login', {
-          method: 'POST',
-          body: JSON.stringify({ email, password })
-        });
-        setToken(out.token);
-        const me = await api('/me').then(d => d.user);
-        showApp(me);
-      } catch (err) {
-        renderLoginForm(err.message || 'Login mislukt.');
+      let data = null; try { data = await res.json(); } catch {}
+      if (res.status === 401) {
+        clearToken();
+        showLogin('Sessietoken is verlopen. Log opnieuw in.');
+        throw new Error('401 unauthorized');
       }
-    });
-  }
-
-  // ---- Show/hide states
-  function showApp(me) {
-    userEmail.textContent = me?.email || '—';
-    userOrg.textContent   = me?.org_key || '—';
-    userProv.textContent  = me?.provider || '—';
-    appShell.classList.remove('hidden');          // show app shell
-    if (typeof window.loadPage === 'function') window.loadPage('lara'); // default page
-  }
-
-  function showLogin(message = '') {
-    appShell.classList.add('hidden');             // hide app shell
-    renderLoginForm(message);                     // put login screen in main
-  }
-
-  
-
-  // ---- Bootstrap: try existing token
-  (async () => {
-    try {
-      const me = await api('/me').then(d => d.user);
-      if (!me) throw new Error('No user');
-      showApp(me);
-    } catch {
-      clearToken()
-      showLogin();
+      if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
+      return data ?? {};
     }
-  })();
 
-  // ---- Buttons
-  logoutBtn?.addEventListener('click', () => {
-    clearToken();
-    showLogin('Je bent uitgelogd.');
-  });
+    // ---- Login UI (renders INTO #login-root)
+    function renderLoginForm(message = '') {
+      loginRoot.innerHTML = `
+        <div class="max-w-sm mx-auto mt-16 bg-white border border-gray-200 rounded-xl p-5 shadow">
+          <h2 class="text-lg font-semibold mb-3">Sign in</h2>
+          ${message ? `<div class="mb-2 text-sm text-red-600">${message}</div>` : ''}
+          <form id="login-form" class="grid gap-3" autocomplete="on">
+            <input name="email" type="email" placeholder="email" required class="px-3 py-2 border rounded"/>
+            <input name="password" type="password" placeholder="password" required class="px-3 py-2 border rounded"/>
+            <button class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-black" type="submit">Login</button>
+          </form>
+        </div>
+      `;
 
-  reloginBtn?.addEventListener('click', () => {
-    clearToken();
-    showLogin();
-  });
-</script>
+      const loginForm = $('login-form');
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = new FormData(loginForm);
+        const email = form.get('email');
+        const password = form.get('password');
+        try {
+          const out = await api('/auth/login', {
+            method:'POST',
+            body: JSON.stringify({ email, password })
+          });
+          setToken(out.token);
+          const me = await api('/me').then(d => d.user);
+          showApp(me);
+        } catch (err) {
+          renderLoginForm(err.message || 'Login mislukt.');
+        }
+      });
+    }
+
+    // ---- Show/hide states
+    function showApp(me) {
+      userEmail.textContent = me?.email || '—';
+      userOrg.textContent   = me?.org_key || '—';
+      userProv.textContent  = me?.provider || '—';
+
+      // hide login, show app
+      loginRoot.classList.add('hidden');
+      appShell.classList.remove('hidden');
+
+      if (typeof window.loadPage === 'function') window.loadPage('lara'); // default page
+    }
+
+    function showLogin(message = '') {
+      // hide app, show login
+      appShell.classList.add('hidden');
+      loginRoot.classList.remove('hidden');
+      renderLoginForm(message);
+    }
+
+    // ---- Bootstrap: try existing token
+    (async () => {
+      try {
+        const me = await api('/me').then(d => d.user);
+        if (!me) throw new Error('No user');
+        showApp(me);
+      } catch {
+        clearToken();
+        showLogin();
+      }
+    })();
+
+    // ---- Buttons
+    logoutBtn?.addEventListener('click', () => {
+      clearToken();
+      showLogin('Je bent uitgelogd.');
+    });
+
+    reloginBtn?.addEventListener('click', () => {
+      clearToken();
+      showLogin();
+    });
+  </script>
+
 
 
 
