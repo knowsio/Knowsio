@@ -92,4 +92,29 @@ export async function ensureSchema() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_kb_org_orgid ON kb_org(org_id);
   `);
+  
+  // inside ensureSchema() add before/after existing tables:
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      key   TEXT PRIMARY KEY,
+      label TEXT NOT NULL
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('admin','user')),
+      org_key TEXT NOT NULL REFERENCES organizations(key) ON DELETE RESTRICT,
+      provider TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_key);`);
+
 }

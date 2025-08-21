@@ -12,6 +12,9 @@ import { ensureSchema } from './db.js';
 import axios from 'axios';
 import { generateLLM } from './llm.js';
 import { listProviders, PROVIDERS } from './llm.js';
+import { listOrganizations } from './org-config.js';
+import { createUser, authenticate, requireAuth, requireRole } from './auth.js';
+
 
 dotenv.config();
 const app = express();
@@ -324,4 +327,84 @@ ensureSchema()
 
 app.get('/llm/providers', (_req, res) => {
   res.json({ providers: listProviders() }); // no secrets
+});
+
+app.get('/organizations', (_req, res) => {
+  res.json({ organizations: listOrganizations() });
+});
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'email & password required' });
+    const out = await authenticate(email, password);
+    res.json(out);
+  } catch {
+    res.status(401).json({ error: 'Invalid credentials' });
+  }
+});
+
+// one-time bootstrap admin (remove/disable after first use)
+app.post('/auth/bootstrap-admin', async (req, res) => {
+  try {
+    const { email, password, org_key='MMM', provider='OLLAMA' } = req.body || {};
+    const exists = await pool.query(`SELECT 1 FROM users WHERE role='admin' LIMIT 1`);
+    if (exists.rowCount) return res.status(400).json({ error: 'admin already exists' });
+    const admin = await createUser({ email, password, role:'admin', org_key, provider });
+    res.json({ ok: true, admin });
+  } catch (e) {
+    res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+// Admin user management
+app.post('/admin/users', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { email, password, role='user', org_key, provider } = req.body || {};
+    if (!email || !password || !org_key || !provider) return res.status(400).json({ error: 'missing fields' });
+    const u = await createUser({ email, password, role, org_key, provider });
+    res.json({ ok: true, user: u });
+  } catch (e) {
+    res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+app.get('/admin/users', requireAuth, requireRole('admin'), async (_req, res) => {
+  const { rows } = await pool.query(`SELECT id, email, role, org_key, provider, created_at FROM users ORDER BY created_at DESC LIMIT 200`);
+  res.json({ users: rows });
+});
+
+app.patch('/admin/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  const { id } = req.params;
+  const { org_key, provider, role } = req.body || {};
+
+  const sets = []; const vals = []; let i = 1;
+  if (org_key)  { sets.push(`org_key=$${i++}`);  vals.push(org_key); }
+  if (provider) { sets.push(`provider=$${i++}`); vals.push(provider); }
+  if (role)     { sets.push(`role=$${i++}`);     vals.push(role); }
+  if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+
+  vals.push(id);
+  await pool.query(`UPDATE users SET ${sets.join(', ')}, updated_at=now() WHERE id=$${i}`, vals);
+  res.json({ ok: true });
+});
+
+app.delete('/admin/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  await pool.query(`DELETE FROM users WHERE id=$1`, [req.params.id]);
+  res.json({ ok: true });
+});
+
+// Everything UI needs in one call
+app.get('/config', requireAuth, (req, res) => {
+  res.json({
+    me: {
+      id: req.user.sub,
+      email: req.user.email,
+      role: req.user.role,
+      org_key: req.user.org_key,
+      provider: req.user.provider,
+    },
+    providers: listProviders(),
+    organizations: listOrganizations(),
+  });
 });
