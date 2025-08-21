@@ -2,7 +2,7 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
-import { ORGANIZATIONS } from './org-config.js';
+import { ORGANIZATIONS } from './organizations.js';
 import { PROVIDERS } from './llm-config.js';
 
 const JWT_SECRET  = process.env.JWT_SECRET  || 'dev-secret';
