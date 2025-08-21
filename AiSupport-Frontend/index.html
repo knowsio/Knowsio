@@ -19,6 +19,10 @@
   <header class="flex items-center p-4 bg-white shadow">
     <img src="logo.png" alt="Knowsio Logo" class="h-10 w-auto">
     <h1 class="ml-3 text-xl font-semibold text-gray-800">Knowsio</h1>
+    <button id="reloginBtn" 
+            class="ml-auto text-sm bg-gray-900 text-white px-3 py-1.5 rounded hover:bg-black">
+      Opnieuw inloggen
+    </button>
   </header>
 
   <!-- App shell (hidden until /me succeeds) -->
@@ -90,10 +94,22 @@
       const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
       const res = await fetch(`${API}${path}`, { ...opts, headers });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      return data;
-    }
+      
+      let data = null;
+      try { data = await res.json(); } catch {}
 
+      if (res.status === 401) {
+        clearToken();
+        showLogin('Sessietoken is verlopen. Log opnieuw in.');
+        throw new Error('401 unauthorized');
+      }
+      if (!res.ok) {
+        const msg = data?.error || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      return data ?? {};
+    }
+    
     function showApp(me) {
       userEmail.textContent = me.email || '—';
       userOrg.textContent = me.org_key || '—';
@@ -150,8 +166,15 @@
     // ======== Logout ========
     $('logout').addEventListener('click', () => {
       clearToken();
+      showLogin('Je bent uitgelogd.');
+    });
+
+    document.getElementById('reloginBtn')?.addEventListener('click', () => {
+      clearToken();
       showLogin();
     });
+
+
   </script>
 
   <!-- Your app logic: defines loadPage(), initLara(), initLotte(), etc. -->
