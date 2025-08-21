@@ -1,36 +1,162 @@
-<!DOCTYPE html>
-<html lang="nl">
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Knowsio</title>
-  <link rel="icon" type="image/png" href="logo.png" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <title>AiSupport</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --border:#e5e7eb; --muted:#6b7280; --bg:#f8fafc; --card:#ffffff; }
+    html,body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); }
+    .layout { display:grid; grid-template-columns: 260px 1fr; height:100vh; }
+    aside { background:#fff; border-right:1px solid var(--border); display:flex; flex-direction:column; }
+    .aside-content { padding:16px; overflow:auto; }
+    .aside-footer { margin-top:auto; border-top:1px solid var(--border); padding:12px 14px; font-size:13px; color:#111; background:#fff; }
+    .aside-footer .label { color:var(--muted); font-size:12px; }
+    .aside-footer .value { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .btn { cursor:pointer; background:#111827; color:#fff; border:0; padding:8px 12px; border-radius:8px; }
+    .btn.secondary { background:#eee; color:#111; }
+    main { padding:20px; overflow:auto; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+    /* Login overlay */
+    #login-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:50; }
+    #login-box { width:340px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
+    #login-box h2 { margin:0 0 12px; font-size:18px; }
+    #login-form { display:grid; gap:10px; }
+    #login-form input { padding:10px; border-radius:8px; border:1px solid var(--border); font-size:14px; }
+    #login-error { color:#b91c1c; font-size:13px; min-height:18px; }
+    /* Hide app until authenticated */
+    #app-shell.hidden { visibility:hidden; }
+  </style>
 </head>
-<body class="bg-gray-100 text-gray-800">
-     <!-- Header with logo -->
-  <header class="flex items-center p-4 bg-white shadow">
-    <img src="logo.png" alt="Knowsio Logo" class="h-10 w-auto">
-    <h1 class="ml-3 text-xl font-semibold text-gray-800">Knowsio</h1>
-  </header>
-  <div class="flex h-[calc(100vh-4rem)]">
-   
-    <!-- Sidebar -->
-    <aside class="w-64 bg-white shadow-md p-4">
-      <h1 class="text-xl font-bold mb-6"></h1>
-      <nav class="space-y-4">
-        <button onclick="loadPage('lara')" class="flex items-center space-x-2 w-full text-left py-2 px-3 rounded hover:bg-gray-200"><img src="Lara_small.png" alt="Lara" class="w-6 h-6 rounded-full"> <span>Lara</span></button>
-        <button onclick="loadPage('lotte')" class="flex items-center space-x-2 w-full text-left py-2 px-3 rounded hover:bg-gray-200"><img src="Lotte_small.png" alt="Lara" class="w-6 h-6 rounded-full"> <span>Lotte</span></button>
-        <button onclick="loadPage('taken')" class="w-full text-left py-2 px-3 rounded hover:bg-gray-200">Takenlijst</button>
-      </nav>
+<body>
+
+  <!-- App shell (hidden until /me succeeds) -->
+  <div id="app-shell" class="layout hidden">
+    <aside>
+      <div class="aside-content">
+        <!-- your sidebar content / nav goes here -->
+        <h3>Navigation</h3>
+        <ul>
+          <li>Home</li>
+          <li>Knowledge Base</li>
+          <li>Settings</li>
+        </ul>
+      </div>
+
+      <!-- User panel pinned to the bottom -->
+      <div id="user-panel" class="aside-footer" aria-live="polite">
+        <div class="label">Signed in</div>
+        <div class="value" id="user-email">—</div>
+        <div class="label" style="margin-top:6px;">Org / Provider</div>
+        <div class="value"><span id="user-org">—</span> · <span id="user-prov">—</span></div>
+        <button id="logout" class="btn secondary" style="margin-top:10px; width:100%;">Logout</button>
+      </div>
     </aside>
 
-    <!-- Main Content -->
-    <main id="content" class="flex-1 p-6 overflow-auto">
-      <!-- Content will be loaded here -->
+    <main>
+      <!-- your main page content -->
+      <div class="card">
+        <h2>Welcome</h2>
+        <p>This content is visible only after login.</p>
+      </div>
     </main>
   </div>
-  <script src="scripts.js"></script>
+
+  <!-- Login overlay -->
+  <div id="login-overlay" role="dialog" aria-modal="true">
+    <div id="login-box" class="card">
+      <h2>Sign in</h2>
+      <form id="login-form" autocomplete="on">
+        <input name="email" type="email" placeholder="email" required />
+        <input name="password" type="password" placeholder="password" required />
+        <div id="login-error"></div>
+        <button class="btn" type="submit">Login</button>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    // ======== Config ========
+    const API = 'http://localhost:8080'; // backend running in Docker on host 8080
+
+    // ======== Helpers ========
+    const $ = (id) => document.getElementById(id);
+    const appShell = $('app-shell');
+    const loginOverlay = $('login-overlay');
+    const loginForm = $('login-form');
+    const loginError = $('login-error');
+    const userEmail = $('user-email');
+    const userOrg = $('user-org');
+    const userProv = $('user-prov');
+
+    function setToken(t){ localStorage.setItem('token', t); }
+    function getToken(){ return localStorage.getItem('token'); }
+    function clearToken(){ localStorage.removeItem('token'); }
+
+    async function api(path, opts = {}) {
+      const headers = { ...(opts.headers||{}), 'Content-Type': 'application/json' };
+      const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
+      const res = await fetch(`${API}${path}`, { ...opts, headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function showApp(me) {
+      // Populate sidebar footer
+      userEmail.textContent = me.email || '—';
+      userOrg.textContent = me.org_key || '—';
+      userProv.textContent = me.provider || '—';
+
+      loginOverlay.style.display = 'none';
+      appShell.classList.remove('hidden');
+    }
+    function showLogin(errMsg = '') {
+      appShell.classList.add('hidden');
+      loginOverlay.style.display = 'flex';
+      loginError.textContent = errMsg;
+    }
+
+    // ======== Bootstrap: try to authenticate via /me ========
+    (async () => {
+      try {
+        const me = await api('/me').then(d => d.user); // { user: { email, org_key, provider, ... } }
+        if (!me) throw new Error('No user');
+        showApp(me);
+      } catch {
+        showLogin(); // no token / invalid token → login first
+      }
+    })();
+
+    // ======== Login flow ========
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      loginError.textContent = '';
+      const form = new FormData(loginForm);
+      const email = form.get('email');
+      const password = form.get('password');
+
+      try {
+        // Your backend may return { token, user } OR { token, profile };
+        // we standardize by calling /me right after.
+        const out = await api('/auth/login', {
+          method:'POST',
+          body: JSON.stringify({ email, password })
+        }); // /auth/login route exists in your server. 
+
+        setToken(out.token);
+        const me = await api('/me').then(d => d.user); // requires Authorization header. 
+        showApp(me);
+      } catch (err) {
+        showLogin(err.message);
+      }
+    });
+
+    // ======== Logout ========
+    $('logout').addEventListener('click', () => {
+      clearToken();
+      showLogin();
+    });
+  </script>
 </body>
 </html>
