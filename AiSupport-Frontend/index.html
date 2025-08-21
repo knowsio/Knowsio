@@ -60,21 +60,27 @@
   
 
   <!-- Auth + app wiring -->
+  
   <script type="module">
-  // ======== Config ========
-  const API = window.location.origin; // same-origin via Nginx
+  // ---- Config
+  const API = window.location.origin;
 
-  // ======== Helpers ========
+  // ---- DOM helpers
   const $ = (id) => document.getElementById(id);
   const appShell   = $('app-shell');
-  const reloginBtn = $('reloginBtn');
+  const content    = $('content');         // main mount point
   const logoutBtn  = $('logout');
-  const content    = $('content');     // main mount
+  const reloginBtn = $('reloginBtn');
+  const userEmail  = $('user-email');
+  const userOrg    = $('user-org');
+  const userProv   = $('user-prov');
 
-  function setToken(t){ localStorage.setItem('token', t); }
-  function getToken(){ return localStorage.getItem('token'); }
-  function clearToken(){ localStorage.removeItem('token'); }
+  // ---- Token helpers
+  const setToken   = (t) => localStorage.setItem('token', t);
+  const getToken   = ()  => localStorage.getItem('token');
+  const clearToken = ()  => localStorage.removeItem('token');
 
+  // ---- API with 401 → relogin
   async function api(path, opts = {}) {
     const headers = { ...(opts.headers||{}), 'Content-Type': 'application/json' };
     const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
@@ -86,14 +92,11 @@
       showLogin('Sessietoken is verlopen. Log opnieuw in.');
       throw new Error('401 unauthorized');
     }
-    if (!res.ok) {
-      const msg = (data && (data.error || data.message)) || `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
+    if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
     return data ?? {};
   }
 
-  // ======== Rendering ========
+  // ---- Login UI (renders INTO #content)
   function renderLoginForm(message = '') {
     content.innerHTML = `
       <div class="max-w-sm mx-auto mt-16 bg-white border border-gray-200 rounded-xl p-5 shadow">
@@ -107,16 +110,15 @@
       </div>
     `;
 
-    const loginForm = document.getElementById('login-form');
+    const loginForm = $('login-form');
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = new FormData(loginForm);
       const email = form.get('email');
       const password = form.get('password');
-
       try {
         const out = await api('/auth/login', {
-          method:'POST',
+          method: 'POST',
           body: JSON.stringify({ email, password })
         });
         setToken(out.token);
@@ -128,23 +130,21 @@
     });
   }
 
+  // ---- Show/hide states
   function showApp(me) {
-    // Fill the user panel at the bottom of the sidebar
-    $('user-email').textContent = me?.email || '—';
-    $('user-org').textContent   = me?.org_key || '—';
-    $('user-prov').textContent  = me?.provider || '—';
-
-    appShell.classList.remove('hidden'); // show app shell
-    // Load default page
-    if (typeof window.loadPage === 'function') window.loadPage('lara');
+    userEmail.textContent = me?.email || '—';
+    userOrg.textContent   = me?.org_key || '—';
+    userProv.textContent  = me?.provider || '—';
+    appShell.classList.remove('hidden');          // show app shell
+    if (typeof window.loadPage === 'function') window.loadPage('lara'); // default page
   }
 
   function showLogin(message = '') {
-    appShell.classList.add('hidden');   // hide app shell
-    renderLoginForm(message);           // render login page in main
+    appShell.classList.add('hidden');             // hide app shell
+    renderLoginForm(message);                     // put login screen in main
   }
 
-  // ======== Bootstrap: try token via /me ========
+  // ---- Bootstrap: try existing token
   (async () => {
     try {
       const me = await api('/me').then(d => d.user);
@@ -155,7 +155,7 @@
     }
   })();
 
-  // ======== Buttons ========
+  // ---- Buttons
   logoutBtn?.addEventListener('click', () => {
     clearToken();
     showLogin('Je bent uitgelogd.');
@@ -166,6 +166,7 @@
     showLogin();
   });
 </script>
+
 
 
   <!-- Your app logic: defines loadPage(), initLara(), initLotte(), etc. -->
