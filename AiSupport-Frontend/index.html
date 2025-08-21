@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="style.css">
   <style>
     /* minimal extras for login overlay (not in Tailwind) */
-    #login-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:50; }
+   
   </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
@@ -57,18 +57,7 @@
     </main>
   </div>
 
-  <!-- Login overlay -->
-  <div id="login-overlay" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50">
-    <div class="w-[340px] bg-white border border-gray-200 rounded-xl p-5 shadow-xl">
-      <h2 class="text-lg font-semibold mb-3">Sign in</h2>
-      <form id="login-form" autocomplete="on" class="grid gap-3">
-        <input name="email" type="email" placeholder="email" required class="px-3 py-2 border rounded"/>
-        <input name="password" type="password" placeholder="password" required class="px-3 py-2 border rounded"/>
-        <div id="login-error" class="text-red-600 text-sm min-h-[18px]"></div>
-        <button class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-black" type="submit">Login</button>
-      </form>
-    </div>
-  </div>
+  
 
   <!-- Auth + app wiring -->
   <script type="module">
@@ -77,15 +66,10 @@
 
   // ======== Helpers ========
   const $ = (id) => document.getElementById(id);
-  const appShell     = $('app-shell');
-  const loginOverlay = $('login-overlay');
-  const loginForm    = $('login-form');
-  const loginError   = $('login-error');
-  const userEmail    = $('user-email');
-  const userOrg      = $('user-org');
-  const userProv     = $('user-prov');
-  const reloginBtn   = $('reloginBtn');
-  const logoutBtn    = $('logout');
+  const appShell   = $('app-shell');
+  const reloginBtn = $('reloginBtn');
+  const logoutBtn  = $('logout');
+  const content    = $('content');     // main mount
 
   function setToken(t){ localStorage.setItem('token', t); }
   function getToken(){ return localStorage.getItem('token'); }
@@ -96,9 +80,7 @@
     const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
     const res = await fetch(`${API}${path}`, { ...opts, headers });
 
-    let data = null;
-    try { data = await res.json(); } catch {} // tolerate empty/invalid JSON
-
+    let data = null; try { data = await res.json(); } catch {}
     if (res.status === 401) {
       clearToken();
       showLogin('Sessietoken is verlopen. Log opnieuw in.');
@@ -111,26 +93,55 @@
     return data ?? {};
   }
 
+  // ======== Rendering ========
+  function renderLoginForm(message = '') {
+    content.innerHTML = `
+      <div class="max-w-sm mx-auto mt-16 bg-white border border-gray-200 rounded-xl p-5 shadow">
+        <h2 class="text-lg font-semibold mb-3">Sign in</h2>
+        ${message ? `<div class="mb-2 text-sm text-red-600">${message}</div>` : ''}
+        <form id="login-form" class="grid gap-3" autocomplete="on">
+          <input name="email" type="email" placeholder="email" required class="px-3 py-2 border rounded"/>
+          <input name="password" type="password" placeholder="password" required class="px-3 py-2 border rounded"/>
+          <button class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-black" type="submit">Login</button>
+        </form>
+      </div>
+    `;
+
+    const loginForm = document.getElementById('login-form');
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = new FormData(loginForm);
+      const email = form.get('email');
+      const password = form.get('password');
+
+      try {
+        const out = await api('/auth/login', {
+          method:'POST',
+          body: JSON.stringify({ email, password })
+        });
+        setToken(out.token);
+        const me = await api('/me').then(d => d.user);
+        showApp(me);
+      } catch (err) {
+        renderLoginForm(err.message || 'Login mislukt.');
+      }
+    });
+  }
+
   function showApp(me) {
-    userEmail.textContent = me?.email || '—';
-    userOrg.textContent   = me?.org_key || '—';
-    userProv.textContent  = me?.provider || '—';
+    // Fill the user panel at the bottom of the sidebar
+    $('user-email').textContent = me?.email || '—';
+    $('user-org').textContent   = me?.org_key || '—';
+    $('user-prov').textContent  = me?.provider || '—';
 
-    loginOverlay.classList.add('hidden');   // hide overlay
-    appShell.classList.remove('hidden');    // show app
-
+    appShell.classList.remove('hidden'); // show app shell
     // Load default page
     if (typeof window.loadPage === 'function') window.loadPage('lara');
   }
 
-  function showLogin(msg = '') {
-    // clear main content
-    const mount = document.getElementById('content');
-    if (mount) mount.innerHTML = '';
-
-    appShell.classList.add('hidden');       // hide app
-    loginOverlay.classList.remove('hidden'); // show overlay
-    loginError.textContent = msg || '';
+  function showLogin(message = '') {
+    appShell.classList.add('hidden');   // hide app shell
+    renderLoginForm(message);           // render login page in main
   }
 
   // ======== Bootstrap: try token via /me ========
@@ -144,35 +155,13 @@
     }
   })();
 
-  // ======== Login flow ========
-  loginForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    loginError.textContent = '';
-    const form = new FormData(loginForm);
-    const email = form.get('email');
-    const password = form.get('password');
-
-    try {
-      const out = await api('/auth/login', {
-        method:'POST',
-        body: JSON.stringify({ email, password })
-      });
-      setToken(out.token);
-      const me = await api('/me').then(d => d.user);
-      showApp(me);
-    } catch (err) {
-      showLogin(err.message);
-    }
-  });
-
-  // ======== Logout ========
-  logoutBtn.addEventListener('click', () => {
+  // ======== Buttons ========
+  logoutBtn?.addEventListener('click', () => {
     clearToken();
     showLogin('Je bent uitgelogd.');
   });
 
-  // ======== Relogin button (header) ========
-  reloginBtn.addEventListener('click', () => {
+  reloginBtn?.addEventListener('click', () => {
     clearToken();
     showLogin();
   });
