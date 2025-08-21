@@ -106,6 +106,10 @@
       if (typeof loadPage === 'function') loadPage('lara');
     }
     function showLogin(errMsg = '') {
+      // wipe any sensitive UI
+      const mount = document.getElementById('content');
+      if (mount) mount.innerHTML = '';
+      // hide app shell, show overlay
       appShell.classList.add('hidden');
       loginOverlay.classList.remove('hidden');
       loginError.textContent = errMsg;
