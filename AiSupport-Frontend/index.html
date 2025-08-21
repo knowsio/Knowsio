@@ -77,7 +77,7 @@
 
   <script type="module">
     // ======== Config ========
-    const API = 'http://localhost:8080'; // backend running in Docker on host 8080
+    const API = window.location.origin; // backend running in Docker on host 8080
 
     // ======== Helpers ========
     const $ = (id) => document.getElementById(id);
