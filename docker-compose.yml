@@ -98,6 +98,7 @@ services:
    restart: unless-stopped
 
   certbot:
+   profiles: ["prod"]
    image: certbot/certbot:latest
    container_name: kb-certbot
    volumes:
