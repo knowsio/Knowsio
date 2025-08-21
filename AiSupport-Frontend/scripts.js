@@ -9,7 +9,6 @@ function loadPage(page) {
     });
 }
 
-window.onload = () => loadPage('lara');
 
 // ---- Lotte logic (unchanged) ----
 async function initLotte() {
@@ -52,11 +51,15 @@ async function initLotte() {
 
 const BACKEND_URL = window.location.origin;
 
+function getToken(){ return localStorage.getItem('token') || localStorage.getItem('jwt'); }
+
 // ---- Ask the backend (/ask) instead of Ollama directly ----
 async function askBackend(question, orgId) {
-  const res = await fetch(`${BACKEND_URL}/ask`, {
+   const headers = { 'Content-Type': 'application/json' };
+   const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
+   const res = await fetch(`${BACKEND_URL}/ask`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       question,
       org_id: orgId || undefined
@@ -158,7 +161,9 @@ function initLara() {
 
     const row = addLog(`⬆️ Uploaden: ${file.name}…`);
     try {
-      const res = await fetch(url, { method: 'POST', body: fd });
+      const headers = {};
+      const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
+      const res = await fetch(url, { method: 'POST', body: fd, headers });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       row.textContent = `✅ ${file.name} — ${data.parts} delen opgeslagen`;

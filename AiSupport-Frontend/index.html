@@ -61,7 +61,7 @@
       </div>
     </aside>
 
-    <main>
+    <main id="content">
       <!-- your main page content -->
       <div class="card">
         <h2>Welcome</h2>
@@ -118,6 +118,8 @@
 
       loginOverlay.style.display = 'none';
       appShell.classList.remove('hidden');
+      // Show default page
+      loadPage('lara');
     }
     function showLogin(errMsg = '') {
       appShell.classList.add('hidden');
