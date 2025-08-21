@@ -53,7 +53,7 @@ services:
 
   backend:
     build:
-      context: ./AiSupport-Backend   # <-- ensure the folder name & case are correct
+      context: ./Aisupport-Backend   # <-- ensure the folder name & case are correct
     container_name: kb-backend
     environment:
       OLLAMA_URL: http://ollama:11434
