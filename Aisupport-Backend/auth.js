@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
 import { ORGANIZATIONS } from './organizations.js';
-import { PROVIDERS } from './llm-config.js';
+import { PROVIDERS } from './llm.js';
 
 const JWT_SECRET  = process.env.JWT_SECRET  || 'dev-secret';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '8h';
