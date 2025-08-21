@@ -34,13 +34,21 @@
   <div id="app-shell" class="layout hidden">
     <aside>
       <div class="aside-content">
-        <!-- your sidebar content / nav goes here -->
-        <h3>Navigation</h3>
-        <ul>
-          <li>Home</li>
-          <li>Knowledge Base</li>
-          <li>Settings</li>
-        </ul>
+        <h3 style="margin:0 0 12px;">Navigatie</h3>
+        <div class="nav-list">
+          <button class="nav-item" data-page="lara">
+            <img src="Lara_small.png" alt="Lara" onerror="this.style.display='none'"/>
+            <span>Lara</span>
+          </button>
+          <button class="nav-item" data-page="lotte">
+            <img src="Lotte_small.png" alt="Lotte" onerror="this.style.display='none'"/>
+            <span>Lotte</span>
+          </button>
+          <button class="nav-item" data-page="taken">
+            <span>📝</span>
+            <span>Takenlijst</span>
+          </button>
+        </div>
       </div>
 
       <!-- User panel pinned to the bottom -->
