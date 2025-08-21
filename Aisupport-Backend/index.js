@@ -14,6 +14,9 @@ import { generateLLM } from './llm.js';
 import { listProviders, PROVIDERS } from './llm.js';
 import { listOrganizations } from './organizations.js';
 import { createUser, authenticate, requireAuth, requireRole } from './auth.js';
+import { ensureAuthSchema, seedOrganizations, getUserByEmail, createUser, listUsers, updateUser } from './db.js';
+import { ORGANIZATIONS, listOrganizations as listOrgsStatic } from './organizations.js';
+import { hashPassword, verifyPassword, issueToken, requireAuth, requireRole } from './auth.js';
 
 
 dotenv.config();
@@ -113,6 +116,89 @@ async function mapLimit(items, limit, fn) {
     next();
   });
 }
+
+app.post('/auth/bootstrap-admin', async (req, res) => {
+  try {
+    const { email, password, org_key, provider } = req.body || {};
+    if (!email || !password || !org_key || !provider) {
+      return res.status(400).json({ error: 'email, password, org_key, provider are required' });
+    }
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'email already exists' });
+
+    // check if any admin exists
+    const { rows } = await pool.query(`SELECT 1 FROM users WHERE role='admin' LIMIT 1`);
+    const role = rows.length ? 'user' : 'admin';
+
+    const passwordHash = await hashPassword(password);
+    const user = await createUser({ email, passwordHash, role, org_key, provider });
+    const token = issueToken({ ...user });
+    res.json({ ok: true, user, token, roleAssigned: role });
+  } catch (e) {
+    console.error('/auth/bootstrap-admin FAIL', e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'email, password required' });
+    const user = await getUserByEmail(email);
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const ok = await verifyPassword(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = issueToken(user);
+    res.json({
+      token,
+      profile: { id: user.id, email: user.email, role: user.role, org_key: user.org_key, provider: user.provider }
+    });
+  } catch (e) {
+    console.error('/auth/login FAIL', e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.get('/me', requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+// admin user management
+app.get('/users', requireAuth, requireRole('admin'), async (_req, res) => {
+  res.json({ users: await listUsers() });
+});
+app.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { email, password, role='user', org_key, provider } = req.body || {};
+    if (!email || !password || !org_key || !provider) return res.status(400).json({ error: 'missing fields' });
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'email already exists' });
+    const passwordHash = await hashPassword(password);
+    const user = await createUser({ email, passwordHash, role, org_key, provider });
+    res.json({ ok: true, user });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+app.patch('/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const patch = {};
+    for (const k of ['role','org_key','provider']) if (req.body[k]) patch[k] = req.body[k];
+    if (req.body.password) patch.password_hash = await hashPassword(req.body.password);
+    const user = await updateUser(id, patch);
+    if (!user) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, user });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// organizations list for UI dropdowns
+app.get('/organizations', requireAuth, async (_req, res) => {
+  const { rows } = await pool.query(`SELECT key,label FROM organizations ORDER BY key`);
+  res.json({ organizations: rows.length ? rows : listOrgsStatic() });
+});
 
 /**
  * Upload endpoint

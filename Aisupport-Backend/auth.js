@@ -8,6 +8,48 @@ import { PROVIDERS } from './llm.js';
 const JWT_SECRET  = process.env.JWT_SECRET  || 'dev-secret';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '8h';
 
+export async function hashPassword(password) {
+  const salt = await bcrypt.genSalt(10);
+  return bcrypt.hash(password, salt);
+}
+export async function verifyPassword(password, hash) {
+  return bcrypt.compare(password, hash);
+}
+
+export function issueToken({ id, email, role, org_key, provider }) {
+  return jwt.sign({ sub: id, email, role, org_key, provider }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+}
+export function verifyToken(token) {
+  return jwt.verify(token, JWT_SECRET);
+}
+
+// Attach req.user if valid; otherwise 401
+export function requireAuth(req, res, next) {
+  try {
+    const hdr = req.headers.authorization || '';
+    const m = hdr.match(/^Bearer\s+(.+)$/i);
+    if (!m) return res.status(401).json({ error: 'Missing Bearer token' });
+    const payload = verifyToken(m[1]);
+    req.user = {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      org_key: payload.org_key,
+      provider: payload.provider
+    };
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+export function requireRole(role) {
+  return (req, res, next) => {
+    if (!req.user || req.user.role !== role) return res.status(403).json({ error: 'Forbidden' });
+    next();
+  };
+}
+
 export async function createUser({ email, password, role='user', org_key, provider }) {
   if (!ORGANIZATIONS[org_key]) throw new Error('Invalid org_key');
   if (!PROVIDERS[provider])   throw new Error('Invalid provider');
