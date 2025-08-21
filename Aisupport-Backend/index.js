@@ -35,13 +35,30 @@ app.get('/health', async (_req, res) => {
 
 const EMBED_CONCURRENCY = parseInt(process.env.EMBED_CONCURRENCY || '3', 10);
 
-// --- simple request id
+// --------------------
+// Timeout constants
+// --------------------
+const TIMEOUTS = {
+  EMBED: parseInt(process.env.TIMEOUT_EMBED || '15000', 10),         // 15s
+  SEARCH: parseInt(process.env.TIMEOUT_SEARCH || '15000', 10),       // 15s
+  BUILD_PROMPT: parseInt(process.env.TIMEOUT_BUILD_PROMPT || '2000', 10), // 2s
+  GENERATE: parseInt(process.env.TIMEOUT_GENERATE || '540000', 10),  // 9 min (below nginx 10m)
+};
+
+// Step watchdog should always be a bit longer than the action itself
+const STEP_MARGIN = 5000;
+function stepTimeout(ms) {
+  return ms + STEP_MARGIN;
+}
+
+// --------------------
+// Helpers
+// --------------------
 function rid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// --- step logger + watchdog timeout
-async function withStep(id, label, fn, timeoutMs = 15000) {
+async function withStep(id, label, fn, timeoutMs = TIMEOUTS.GENERATE) {
   const t0 = Date.now();
   console.log(`[STEP][${id}] ${label} start`);
   const timeout = new Promise((_, reject) =>
@@ -57,8 +74,7 @@ async function withStep(id, label, fn, timeoutMs = 15000) {
   }
 }
 
-// --- ollama /api/generate with explicit timeout & options
-async function generateWithTimeout({ url, model, prompt, options = {}, timeoutMs = 60000 }) {
+async function generateWithTimeout({ url, model, prompt, options = {}, timeoutMs = TIMEOUTS.GENERATE }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(`LLM generate timeout after ${timeoutMs}ms`), timeoutMs);
   try {
@@ -67,7 +83,6 @@ async function generateWithTimeout({ url, model, prompt, options = {}, timeoutMs
       { model, prompt, options, stream: false },
       { signal: controller.signal }
     );
-    // Ollama returns { response: "...", done: true } in JSON mode
     return typeof data === 'string' ? data : (data.response ?? data);
   } finally {
     clearTimeout(timer);
@@ -209,14 +224,14 @@ app.post('/ask', async (req, res) => {
     console.log(`[ASK][${id}] question="${String(question).slice(0,120)}"${question.length>120?'…':''} org=${org_id||'-'}`);
 
     // 1) Embed
-    const qvec = await withStep(id, 'embed', async () => embed(question), 15000);
+    const qvec = await withStep(id, 'embed', async () => embed(question), TIMEOUT_EMBED);
 
     // 2) Search (parallel; each logged separately)
     const [orgSnips, domainSnips] = await Promise.all([
       org_id
-        ? withStep(id, 'searchOrg', async () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), 15000)
+        ? withStep(id, 'searchOrg', async () => searchOrg({ orgId: org_id, queryEmbedding: qvec, limit: k1 }), TIMEOUT_SEARCH)
         : Promise.resolve([]),
-      withStep(id, 'searchDomain', async () => searchDomain({ queryEmbedding: qvec, limit: k2 }), 15000)
+      withStep(id, 'searchDomain', async () => searchDomain({ queryEmbedding: qvec, limit: k2 }), TIMEOUT_SEARCH)
     ]);
 
     // 3) Build context/prompt
@@ -227,7 +242,7 @@ app.post('/ask', async (req, res) => {
     await withStep(id, 'buildPrompt', async () => {
       // light work, but we still log it
       return renderPrompt({ contextSnippets, question });
-    }, 2000);
+    }, TIMEOUT_BUILD_PROMPT);
     const prompt = renderPrompt({ contextSnippets, question });
 
     // 4) Generate (fast demo defaults; override with llmOptions)
@@ -247,9 +262,9 @@ app.post('/ask', async (req, res) => {
         model: process.env.GEN_MODEL,
         prompt,
         options: { ...fastDefaults, ...(llmOptions || {}) },
-        timeoutMs: 60000   // cap single LLM call to 60s for demos
+        timeoutMs: TIMEOUT_GENERATE   // cap single LLM call to 60s for demos
       }),
-      65000               // step watchdog slightly higher than fetch timeout
+      TIMEOUT_GENERATE               // step watchdog slightly higher than fetch timeout
     );
 
     const total = Date.now() - T0;
