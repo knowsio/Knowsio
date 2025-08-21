@@ -151,6 +151,7 @@
       if (!me) throw new Error('No user');
       showApp(me);
     } catch {
+      cleartoken()
       showLogin();
     }
   })();
