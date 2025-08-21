@@ -169,7 +169,7 @@
       showLogin('Je bent uitgelogd.');
     });
 
-    document.getElementById('reloginBtn')?.addEventListener('click', () => {
+    $('reloginBtn').addEventListener('click', () => {
       clearToken();
       showLogin();
     });
