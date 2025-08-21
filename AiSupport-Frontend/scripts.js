@@ -1,14 +1,50 @@
 function loadPage(page) {
   fetch(`${page}.html`)
-    .then(response => response.text())
+    .then(r => r.text())
     .then(html => {
       const mount = document.getElementById('content');
       if (mount) mount.innerHTML = html;
       if (page === 'lotte' && typeof initLotte === 'function') initLotte();
-      if (page === 'lara' && typeof initLara === 'function') initLara();
+      if (page === 'lara'  && typeof initLara  === 'function') initLara();
     });
 }
 
+async function askBackend(question, orgId) {
+  const res = await apiFetch(`${window.location.origin}/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, org_id: orgId || undefined })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function initLogin() {
+  const form = document.getElementById('login-form');
+  const msg  = document.getElementById('login-msg');
+  if (!form) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = '';
+    const f = new FormData(form);
+    const email = f.get('email');
+    const password = f.get('password');
+    try {
+      const res = await fetch(`${window.location.origin}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setToken(data.token);
+      loadPage('lara');
+    } catch (err) {
+      msg.textContent = err.message || 'Login mislukt.';
+    }
+  });
+}
 
 // ---- Lotte logic (unchanged) ----
 async function initLotte() {
@@ -55,15 +91,10 @@ function getToken(){ return localStorage.getItem('token') || localStorage.getIte
 
 // ---- Ask the backend (/ask) instead of Ollama directly ----
 async function askBackend(question, orgId) {
-   const headers = { 'Content-Type': 'application/json' };
-   const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
-   const res = await fetch(`${BACKEND_URL}/ask`, {
+  const res = await apiFetch(`${window.location.origin}/ask`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify({
-      question,
-      org_id: orgId || undefined
-    }) 
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, org_id: orgId || undefined })
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -195,4 +226,17 @@ function initLara() {
   }
 
   kbUploadBtn?.addEventListener('click', uploadAll);
+}
+
+function setToken(t){ localStorage.setItem('token', t); }
+function getToken(){ return localStorage.getItem('token'); }
+function clearToken(){ localStorage.removeItem('token'); }
+
+// --- API wrapper (adds Authorization if we have a token) ---
+async function apiFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  const t = getToken();
+  if (t) headers.Authorization = `Bearer ${t}`;
+  const res = await fetch(url, { ...opts, headers });
+  return res;
 }
