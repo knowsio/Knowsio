@@ -8,13 +8,12 @@ import { embed, generate } from './ollama.js';
 import { chunkText } from './chunk.js';
 import { extractText } from './ingest.js';
 import { renderPrompt } from './prompt.js';
-import { ensureSchema } from './db.js';
 import axios from 'axios';
 import { generateLLM } from './llm.js';
 import { listProviders, PROVIDERS } from './llm.js';
 import { listOrganizations } from './organizations.js';
 import { createUser, authenticate, requireAuth, requireRole } from './auth.js';
-import { ensureAuthSchema, seedOrganizations, getUserByEmail, createUser, listUsers, updateUser } from './db.js';
+import { ensureAuthSchema} from './db.js';
 import { ORGANIZATIONS, listOrganizations as listOrgsStatic } from './organizations.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireRole } from './auth.js';
 

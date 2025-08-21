@@ -97,3 +97,43 @@ export function requireRole(role) {
     next();
   };
 }
+
+export async function seedOrganizations(orgs) {
+  if (!orgs || !Object.keys(orgs).length) return;
+  const text = `INSERT INTO organizations(key,label) VALUES ($1,$2)
+                ON CONFLICT (key) DO UPDATE SET label=EXCLUDED.label`;
+  for (const [key, v] of Object.entries(orgs)) {
+    await pool.query(text, [key, v.label]);
+  }
+}
+
+export async function getUserByEmail(email) {
+  const { rows } = await pool.query(`SELECT * FROM users WHERE email=$1`, [email]);
+  return rows[0] || null;
+}
+
+export async function getUserById(id) {
+  const { rows } = await pool.query(`SELECT * FROM users WHERE id=$1`, [id]);
+  return rows[0] || null;
+}
+export async function listUsers() {
+  const { rows } = await pool.query(`SELECT id,email,role,org_key,provider,created_at FROM users ORDER BY created_at DESC`);
+  return rows;
+}
+
+export async function updateUser(id, fields) {
+  const cols = [];
+  const vals = [];
+  let i = 1;
+  for (const [k, v] of Object.entries(fields)) {
+    cols.push(`${k}=$${i++}`);
+    vals.push(v);
+  }
+  if (!cols.length) return getUserById(id);
+  vals.push(id);
+  const { rows } = await pool.query(
+    `UPDATE users SET ${cols.join(', ')}, updated_at=now() WHERE id=$${i} RETURNING id,email,role,org_key,provider,created_at`,
+    vals
+  );
+  return rows[0] || null;
+}
